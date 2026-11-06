@@ -23,10 +23,15 @@ jobs:
           if [ -n "$NEWEST" ]; then sudo xcode-select -s "$NEWEST/Contents/Developer"; fi
           xcodebuild -version
 
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
       - name: Build archive (unsigned)
         run: |
           xcodebuild clean archive \
-            -project StikDebug.xcodeproj \
+            -project Wayfarer.xcodeproj \
             -scheme "StikDebug" \
             -configuration Debug \
             -archivePath build/Wayfarer.xcarchive \
