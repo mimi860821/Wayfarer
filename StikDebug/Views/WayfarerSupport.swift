@@ -21,10 +21,10 @@ enum TravelMode: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .walking: return "Walk"
-        case .running: return "Run"
-        case .cycling: return "Bike"
-        case .driving: return "Drive"
+        case .walking: return "走路"
+        case .running: return "跑步"
+        case .cycling: return "騎車"
+        case .driving: return "開車"
         }
     }
 
@@ -41,6 +41,22 @@ enum TravelMode: String, CaseIterable, Identifiable {
         switch self {
         case .driving: return .automobile
         default: return .walking
+        }
+    }
+}
+
+enum WayfarerTab: String, CaseIterable, Identifiable {
+    case teleport
+    case navigate
+    case multi
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .teleport: return "瞬移"
+        case .navigate: return "導航"
+        case .multi: return "多點路徑"
         }
     }
 }
@@ -82,7 +98,8 @@ enum WayfarerRouteBuilder {
     static func build(
         stops: [CLLocationCoordinate2D],
         loop: Bool,
-        mode: TravelMode
+        mode: TravelMode,
+        followRoads: Bool
     ) async throws -> WayfarerBuiltRoute {
         var points = stops
         if loop, let first = stops.first, stops.count > 1 {
@@ -92,8 +109,16 @@ enum WayfarerRouteBuilder {
             throw NSError(
                 domain: "Wayfarer",
                 code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "Add at least two stops."]
+                userInfo: [NSLocalizedDescriptionKey: "請至少加入兩個站點。"]
             )
+        }
+
+        if !followRoads {
+            var total: CLLocationDistance = 0
+            for (a, b) in zip(points, points.dropFirst()) {
+                total += straightDistance(a, b)
+            }
+            return WayfarerBuiltRoute(coordinates: points, distance: total, straightLegCount: 0)
         }
 
         var allCoordinates: [CLLocationCoordinate2D] = []
@@ -151,15 +176,16 @@ enum WayfarerRouteBuilder {
     }
 }
 
-/// Mode picker plus speed stepper, shown above the route controls.
+/// Mode picker plus a speed field (type a value or use the stepper).
 struct TravelModeSpeedBar: View {
     @Binding var modeRaw: String
     @Binding var speedKmh: Double
     var modeLocked: Bool
+    @FocusState private var speedFieldFocused: Bool
 
     var body: some View {
         VStack(spacing: 8) {
-            Picker("Mode", selection: $modeRaw) {
+            Picker("移動模式", selection: $modeRaw) {
                 ForEach(TravelMode.allCases) { mode in
                     Text(mode.title).tag(mode.rawValue)
                 }
@@ -167,9 +193,27 @@ struct TravelModeSpeedBar: View {
             .pickerStyle(.segmented)
             .disabled(modeLocked)
 
-            Stepper(value: $speedKmh, in: 1...120, step: 1) {
-                Text("Speed \(Int(speedKmh)) km/h")
-                    .font(.footnote.monospacedDigit())
+            HStack(spacing: 8) {
+                Text("速度")
+                    .font(.subheadline)
+                TextField("速度", value: $speedKmh, format: .number)
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 80)
+                    .focused($speedFieldFocused)
+                Text("公里/小時")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Stepper("", value: $speedKmh, in: 1...300, step: 1)
+                    .labelsHidden()
+            }
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("完成") { speedFieldFocused = false }
+                }
             }
         }
     }

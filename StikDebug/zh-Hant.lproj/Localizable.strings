@@ -1,0 +1,190 @@
+/* Wayfarer: Traditional Chinese (Taiwan) */
+
+/* Shared */
+"OK" = "好";
+"Cancel" = "取消";
+"Done" = "完成";
+"Close" = "關閉";
+"Save" = "儲存";
+"Delete" = "刪除";
+"Remove" = "移除";
+"Refresh" = "重新整理";
+"Reload" = "重新載入";
+"Copied" = "已複製";
+"Try Again" = "再試一次";
+"Confirm" = "確認";
+"Create" = "建立";
+"New" = "新增";
+"Import" = "匯入";
+"Export" = "匯出";
+"Add" = "新增";
+"Clear" = "清除";
+"Proceed" = "繼續";
+"Working…" = "處理中…";
+"Loading..." = "載入中…";
+"app" = "App";
+"process %d" = "處理程序 %d";
+
+/* JIT / installed apps */
+"Enable JIT" = "啟用 JIT";
+"Enable JIT for %@" = "為「%@」啟用 JIT";
+"Enable JIT by PID" = "依 PID 啟用 JIT";
+"Recents" = "最近使用";
+"Apps with get-task-allow" = "具備 get-task-allow 的 App";
+"All Apps" = "所有 App";
+"Search apps or bundle ID" = "搜尋 App 或 Bundle ID";
+"Search" = "搜尋";
+"Launch Apps" = "啟動 App";
+"Launch App" = "啟動 App";
+"Launch" = "啟動";
+"Launching" = "啟動中";
+"Launching %@" = "正在啟動「%@」";
+"Launch %@" = "啟動「%@」";
+"Launch failed for %@" = "「%@」啟動失敗";
+"Launch request sent for %@" = "已送出「%@」的啟動要求";
+"Launch request in progress." = "啟動要求進行中。";
+"Ready" = "就緒";
+"Starting JIT for %@" = "正在為「%@」啟動 JIT";
+"JIT failed for %@" = "「%@」JIT 失敗";
+"JIT request completed for %@" = "「%@」的 JIT 要求已完成";
+"Failed to Enable JIT" = "啟用 JIT 失敗";
+"No matching apps" = "沒有符合的 App";
+"No JIT Apps Found" = "找不到可用 JIT 的 App";
+"No matches" = "沒有符合的項目";
+"No Apps Found" = "找不到 App";
+"Try a different name or bundle identifier." = "請試試其他名稱或 Bundle ID。";
+"Try another name or bundle identifier." = "請試試其他名稱或 Bundle ID。";
+"StikDebug can only connect to apps with the \"get-task-allow\" entitlement." = "只能連接具備「get-task-allow」權限的 App。";
+"Once your device pairing file is imported and CoreDevice is connected, all apps will appear here." = "匯入配對檔並連線成功後，所有 App 會顯示在這裡。";
+"Either bundle ID or PID should be specified." = "請指定 Bundle ID 或 PID。";
+"Error Occurred While Executing Script." = "執行腳本時發生錯誤。";
+"StikDebug could not launch or attach to the selected app. Check that the VPN is enabled, the pairing file is current, and the app is still installed." = "無法啟動或連接所選的 App。請確認 VPN 已開啟、配對檔有效，且 App 仍已安裝。";
+"The device connection or Developer Disk Image wasn't ready in time. Open StikDebug directly, wait for it to finish connecting, then try again." = "裝置連線或開發者磁碟映像檔未能及時就緒。請直接開啟 App，等連線完成後再試一次。";
+"Favorite" = "我的最愛";
+"Favorites (%d/4)" = "我的最愛 (%d/4)";
+"Favorites are full" = "我的最愛已滿";
+"Add to Favorites" = "加入我的最愛";
+"Remove from Favorites" = "從我的最愛移除";
+"Added to Favorites" = "已加入我的最愛";
+"Removed from Favorites" = "已從我的最愛移除";
+"Remove Favorite" = "移除我的最愛";
+"Assigned script %@" = "已指定腳本 %@";
+"Bundle ID %@" = "Bundle ID %@";
+"Bundle ID copied" = "已複製 Bundle ID";
+"Copy Bundle ID" = "複製 Bundle ID";
+"Copy ID" = "複製 ID";
+"Assign Script" = "指定腳本";
+"Reset Script" = "重設腳本";
+"Double-tap to launch this app without enabling JIT." = "點兩下可不啟用 JIT 直接啟動此 App。";
+"Double-tap to open the app and enable JIT. Use the actions rotor for favorites or bundle ID." = "點兩下可開啟 App 並啟用 JIT。";
+"Enter the process identifier of a currently running app." = "輸入目前執行中 App 的處理程序 ID。";
+"Enable JIT by PID" = "依 PID 啟用 JIT";
+"Process" = "處理程序";
+"PID" = "PID";
+"Script (Optional)" = "腳本（選填）";
+"Remove Script" = "移除腳本";
+"Script execution is disabled on this device." = "此裝置已停用腳本執行。";
+"StikDebug isn't meant to attach to itself. Enabling JIT for StikDebug serves no purpose. Select the app you want to enable JIT for instead." = "不需要對 App 自己啟用 JIT。請選擇你要啟用 JIT 的其他 App。";
+
+/* Tools list & console */
+"Tools" = "工具";
+"Console" = "主控台";
+"App" = "App";
+"System" = "系統";
+"Copy Logs" = "複製記錄";
+"Adjust Speed" = "調整速度";
+"Syslog Speed" = "系統記錄速度";
+"Choose how quickly new relay entries appear." = "選擇新記錄顯示的速度。";
+"Filter logs" = "篩選記錄";
+"Export Logs" = "匯出記錄";
+"=== DEVICE INFORMATION ===" = "=== 裝置資訊 ===";
+"=== LOG ENTRIES ===" = "=== 記錄內容 ===";
+
+/* Device info */
+"Device Info" = "裝置資訊";
+"No pairing file detected" = "找不到配對檔";
+"Import your device's pairing file to get started." = "請先匯入配對檔。";
+"Copy Value" = "複製值";
+"Copy Key & Value" = "複製名稱與值";
+"No info available" = "沒有資訊";
+"Fetching device info…" = "正在取得裝置資訊…";
+"Copy All (Text)" = "全部複製（文字）";
+"Copy All (CSV)" = "全部複製（CSV）";
+"Share…" = "分享…";
+"Import Pairing File" = "匯入配對檔";
+"Search device info…" = "搜尋裝置資訊…";
+
+/* Scripts */
+"No Script" = "沒有腳本";
+"Copy Filename" = "複製檔名";
+"Copy Path" = "複製路徑";
+"Set Default" = "設為預設";
+"New Script" = "新增腳本";
+"Filename" = "檔名";
+"Delete Script?" = "要刪除腳本嗎？";
+"Delete %@? This cannot be undone." = "要刪除 %@ 嗎？此動作無法復原。";
+"Starting script..." = "正在啟動腳本…";
+"Running %@" = "正在執行 %@";
+
+/* Process inspector */
+"Process Inspector" = "處理程序檢視";
+"Overview" = "總覽";
+"Total Processes" = "處理程序總數";
+"Processes" = "處理程序";
+"No matching processes." = "沒有符合的處理程序。";
+"PID %lld" = "PID %lld";
+
+/* App expiry / profiles */
+"App Expiry" = "App 到期日";
+"No profiles found." = "找不到描述檔。";
+"Expires: %@" = "到期：%@";
+"No matching profile" = "沒有符合的描述檔";
+"Other Profiles" = "其他描述檔";
+"Confirm Removal" = "確認移除";
+"Missing entitlements:" = "缺少的權限：";
+"Remove profile for %@ (UUID: %@)?\nApps associated with this profile may become unavailable." = "要移除「%@」(UUID: %@) 的描述檔嗎？\n與此描述檔相關的 App 可能無法使用。";
+
+/* Settings */
+"Settings" = "設定";
+"Star on GitHub" = "在 GitHub 按星";
+"Pairing File" = "配對檔";
+"Pair a Device" = "配對裝置";
+"Importing pairing file…" = "正在匯入配對檔…";
+"Background Keep-Alive" = "背景保持運作";
+"Silent Audio" = "靜音音訊";
+"Plays inaudible audio so iOS keeps the app running." = "播放聽不到的音訊，讓 iOS 保持 App 執行。";
+"Background Location" = "背景定位";
+"Uses low-accuracy location to stay alive when an activity needs it." = "需要時使用低精度定位，讓 App 保持在背景執行。";
+"Behavior" = "行為";
+"Confirm JIT Links" = "確認 JIT 連結";
+"Ask before external links enable JIT or run scripts." = "外部連結啟用 JIT 或執行腳本前先詢問。";
+"Always Run Scripts" = "一律執行腳本";
+"Treats device as TXM-capable to bypass hardware checks." = "將裝置視為支援 TXM，略過硬體檢查。";
+"Debugging" = "除錯";
+"Malloc Debugging" = "記憶體除錯";
+"Attaches processes with MallocGuardEdges and MallocScribble to detect memory corruption." = "附加 MallocGuardEdges 與 MallocScribble 以偵測記憶體損毀。";
+"Advanced" = "進階";
+"Target Device IP" = "目標裝置 IP";
+"Remote Pairing Port" = "遠端配對通訊埠";
+"App Folder" = "App 資料夾";
+"Redownload DDI" = "重新下載 DDI";
+"Help" = "說明";
+"Pairing File Guide" = "配對檔說明";
+"Connect LocalDevVPN" = "連接 LocalDevVPN";
+"Discord Support" = "Discord 支援";
+"Redownload DDI Files?" = "要重新下載 DDI 檔案嗎？";
+"Redownload" = "重新下載";
+"Existing DDI files will be removed before downloading fresh copies." = "會先移除現有的 DDI 檔案，再下載新的。";
+
+/* On-device pairing */
+"Create Pairing File" = "建立配對檔";
+"Pair iPhone or iPad" = "配對 iPhone 或 iPad";
+"Pair Apple TV" = "配對 Apple TV";
+"Place in Another App" = "放入其他 App";
+"Export Pairing File" = "匯出配對檔";
+"Pairing Complete" = "配對完成";
+"Pairing Failed" = "配對失敗";
+"Place Pairing File" = "放置配對檔";
+"Choose an App" = "選擇 App";
+"Loading installed apps…" = "正在載入已安裝的 App…";
+"Pair" = "配對";

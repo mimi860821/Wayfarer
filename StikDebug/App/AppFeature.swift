@@ -26,55 +26,55 @@ enum AppFeature: String, CaseIterable, Identifiable {
         case .home:
             return "JIT"
         case .scripts:
-            return "Scripts"
+            return "腳本"
         case .tools:
-            return "Tools"
+            return "工具"
         case .console:
-            return "Console"
+            return "主控台"
         case .deviceInfo:
-            return "Device Info"
+            return "裝置資訊"
         case .profiles:
-            return "App Expiry"
+            return "App 到期日"
         case .launchApps:
-            return "Launch Apps"
+            return "啟動 App"
         case .processes:
-            return "Processes"
+            return "處理程序"
         case .location:
-            return "Location"
+            return "定位"
         case .settings:
-            return "Settings"
+            return "設定"
         }
     }
 
     var detail: String {
         switch self {
         case .home:
-            return "Enable JIT for installed apps"
+            return "為已安裝的 App 啟用 JIT"
         case .scripts:
-            return "Manage and run JS scripts"
+            return "管理並執行 JS 腳本"
         case .tools:
-            return "Access additional tools"
+            return "更多工具"
         case .console:
-            return "Live device logs"
+            return "裝置即時記錄"
         case .deviceInfo:
-            return "View detailed device metadata"
+            return "檢視裝置詳細資訊"
         case .profiles:
-            return "Check app expiration dates"
+            return "查看 App 到期日"
         case .launchApps:
-            return "Launch installed apps without enabling JIT"
+            return "不啟用 JIT 直接啟動已安裝的 App"
         case .processes:
-            return "Inspect running apps"
+            return "檢視執行中的 App"
         case .location:
-            return "Simulate GPS location"
+            return "模擬 GPS 定位"
         case .settings:
-            return "Configure StikDebug"
+            return "設定 Wayfarer"
         }
     }
 
     var toolTitle: String {
         switch self {
         case .location:
-            return "Location Simulation"
+            return "定位模擬"
         default:
             return title
         }

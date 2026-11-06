@@ -57,7 +57,7 @@ struct SettingsView: View {
                                 .resizable().aspectRatio(contentMode: .fit)
                                 .frame(width: 80, height: 80)
                                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                            Text("StikDebug").font(.title2.weight(.semibold))
+                            Text("Wayfarer").font(.title2.weight(.semibold))
                         }
                         Spacer()
                     }

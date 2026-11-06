@@ -357,9 +357,9 @@ private enum CoordinateImportError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .emptyFile:
-            return "The selected file is empty."
+            return "選取的檔案是空的。"
         case .noCoordinates:
-            return "No valid coordinates were found. Use GPX, GeoJSON, JSON, CSV, or plain text with latitude and longitude values."
+            return "找不到有效座標。支援 GPX、GeoJSON、JSON、CSV 或純文字（每行一組「緯度,經度」）。"
         }
     }
 }
@@ -762,7 +762,10 @@ struct LocationSimulationView: View {
     // Wayfarer additions
     @AppStorage("wayfarer.travelMode") private var travelModeRaw = TravelMode.walking.rawValue
     @AppStorage("wayfarer.speedKmh") private var speedKmh: Double = 5
-    @State private var isMultiStopMode = false
+    @State private var panelTab: WayfarerTab = .teleport
+    @State private var showCoordinateInput = false
+    @State private var showStopListInput = false
+    @AppStorage("wayfarer.followRoads") private var followRoads = false
     @State private var multiStops: [RouteStop] = []
     @State private var loopMultiStop = false
     @State private var repeatPlayback = false
@@ -834,28 +837,28 @@ struct LocationSimulationView: View {
         ).formatted(.measurement(width: .abbreviated, usage: .road))
         let durationText = Self.routeDurationFormatter.string(from: routePlan.expectedTravelTime)
         if let durationText, !durationText.isEmpty {
-            return "\(distanceText) • ETA \(durationText)"
+            return "\(distanceText) • 約 \(durationText)"
         }
         return distanceText
     }
 
     private var routeStatusText: String {
         if simulationSession.routeCoordinates != nil {
-            return "Route simulation active."
+            return "路線模擬中。"
         }
         if isLoadingRoute {
-            return "Calculating route…"
+            return "正在計算路線…"
         }
         if isPrefetchingRouteSpeeds {
-            return "Prefetching road speeds…"
+            return "正在取得道路速度…"
         }
         if routePlan != nil {
-            return "Route ready."
+            return "路線已就緒，可以播放。"
         }
         if routeStartSelection != nil || routeEndSelection != nil {
-            return "Pick both route endpoints to build the drive."
+            return "請設定起點與終點。"
         }
-        return "Plan a route from the toolbar."
+        return "請在下方選擇功能。"
     }
 
     private var routeAttributionLink: some View {
@@ -910,19 +913,19 @@ struct LocationSimulationView: View {
                                 .stroke(.blue.opacity(0.8), lineWidth: 5)
                         }
                         if let routeStartCoordinate, multiStops.isEmpty {
-                            Marker("Start", coordinate: routeStartCoordinate)
+                            Marker("起點", coordinate: routeStartCoordinate)
                                 .tint(.green)
                         }
                         if let routeEndCoordinate, multiStops.isEmpty {
-                            Marker("End", coordinate: routeEndCoordinate)
+                            Marker("終點", coordinate: routeEndCoordinate)
                                 .tint(.red)
                         }
                         if let displayedRouteCoordinate {
-                            Marker("Current", coordinate: displayedRouteCoordinate)
+                            Marker("目前位置", coordinate: displayedRouteCoordinate)
                                 .tint(.blue)
                         }
                     } else if let coordinate {
-                        Marker("Pin", coordinate: coordinate)
+                        Marker("圖釘", coordinate: coordinate)
                             .tint(.red)
                     }
                     ForEach(Array(multiStops.enumerated()), id: \.element.id) { index, stop in
@@ -966,21 +969,36 @@ struct LocationSimulationView: View {
 
                 VStack(spacing: 12) {
                     if isImportingCoordinates {
-                        ProgressView("Importing coordinates…")
+                        ProgressView("正在匯入座標…")
                             .font(.footnote)
                     }
 
-                    if isMultiStopMode {
-                        multiStopControls
-                    } else if hasRouteContext {
+                    if !hasRouteContext {
+                        Picker("功能", selection: $panelTab) {
+                            ForEach(WayfarerTab.allCases) { tab in
+                                Text(tab.title).tag(tab)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+
+                    if hasRouteContext {
                         routeControls
                     } else {
-                        pinControls
+                        switch panelTab {
+                        case .teleport:
+                            pinControls
+                        case .navigate:
+                            navigateControls
+                        case .multi:
+                            multiStopControls
+                        }
                     }
                 }
-                .padding(.bottom, 24)
-                .padding(.horizontal, 16)
-                .padding(.horizontal, 16)
+                .padding(14)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .padding(.horizontal, 12)
+                .padding(.bottom, 12)
             }
         }
         .safeAreaInset(edge: .top) {
@@ -1009,30 +1027,15 @@ struct LocationSimulationView: View {
                 }
 
                 Button {
-                    showRouteSearch = true
-                } label: {
-                    Image(systemName: "point.topleft.down.curvedto.point.bottomright.up")
-                }
-                .disabled(isBusy || isRouteRunning)
-
-                Button {
                     showCoordinateImporter = true
                 } label: {
                     Image(systemName: "square.and.arrow.down")
                 }
                 .disabled(isBusy || isRouteRunning || isImportingCoordinates)
-                .accessibilityLabel("Import Coordinates")
-
-                Button {
-                    toggleMultiStopMode()
-                } label: {
-                    Image(systemName: "point.3.connected.trianglepath.dotted")
-                }
-                .disabled(isBusy || isRouteRunning)
-                .accessibilityLabel("Multi-stop Route")
+                .accessibilityLabel("匯入座標檔")
             }
             ToolbarItem(placement: .topBarTrailing) {
-                TextField("Search location...", text: $searchText)
+                TextField("搜尋地點…", text: $searchText)
                     .padding(.leading, 6)
                     .autocorrectionDisabled()
                     .submitLabel(.go)
@@ -1045,16 +1048,16 @@ struct LocationSimulationView: View {
             }
         }
         .alert(alertTitle, isPresented: $showAlert) {
-            Button("OK", role: .cancel) { }
+            Button("好", role: .cancel) { }
         } message: {
             Text(alertMessage)
         }
-        .alert("Save Bookmark", isPresented: $showSaveBookmark) {
-            TextField("Name", text: $newBookmarkName)
-            Button("Save") { addBookmark() }
-            Button("Cancel", role: .cancel) { newBookmarkName = "" }
+        .alert("儲存書籤", isPresented: $showSaveBookmark) {
+            TextField("名稱", text: $newBookmarkName)
+            Button("儲存") { addBookmark() }
+            Button("取消", role: .cancel) { newBookmarkName = "" }
         } message: {
-            Text("Enter a name for this location.")
+            Text("請為這個地點取名。")
         }
         .sheet(isPresented: $showBookmarks) {
             BookmarksView(bookmarks: $bookmarks) { bookmark in
@@ -1088,10 +1091,10 @@ struct LocationSimulationView: View {
                 coordinate = nil
                 routePolyline = makeRoutePolyline(for: routeCoordinates)
                 routeStartSelection = routeCoordinates.first.map {
-                    RouteSearchSelection(title: "Route Start", coordinate: $0)
+                    RouteSearchSelection(title: "路線起點", coordinate: $0)
                 }
                 routeEndSelection = routeCoordinates.last.map {
-                    RouteSearchSelection(title: "Route End", coordinate: $0)
+                    RouteSearchSelection(title: "路線終點", coordinate: $0)
                 }
                 if let routePolyline {
                     position = .rect(routePolyline.boundingMapRect)
@@ -1101,8 +1104,28 @@ struct LocationSimulationView: View {
                 simulatedCoordinate = activeCoordinate
             }
         }
+        .onChange(of: panelTab) { _, _ in
+            panelTabChanged()
+        }
         .onChange(of: travelModeRaw) { _, _ in
             modeChanged()
+        }
+        .sheet(isPresented: $showCoordinateInput) {
+            CoordinateInputSheet(
+                onPlace: { target in
+                    applySelection(target)
+                },
+                onTeleport: { target in
+                    applySelection(target)
+                    DispatchQueue.main.async { simulate() }
+                }
+            )
+        }
+        .sheet(isPresented: $showStopListInput) {
+            StopListInputSheet { coordinates in
+                multiStops = coordinates.map { RouteStop(coordinate: $0) }
+                DispatchQueue.main.async { buildMultiStopRoute() }
+            }
         }
         .onChange(of: speedKmh) { _, _ in
             applySpeedChange()
@@ -1176,7 +1199,7 @@ struct LocationSimulationView: View {
 
         searchText = ""
         searchCompleter.results = []
-        applyImportedCoordinates(importedCoordinates, sourceName: "Imported")
+        applyImportedCoordinates(importedCoordinates, sourceName: "已匯入")
     }
 
     private func importCoordinates(_ result: Result<[URL], Error>) {
@@ -1196,7 +1219,7 @@ struct LocationSimulationView: View {
                         isImportingCoordinates = false
                         applyImportedCoordinates(
                             coordinates,
-                            sourceName: sourceName.isEmpty ? "Imported" : sourceName
+                            sourceName: sourceName.isEmpty ? "已匯入" : sourceName
                         )
                     }
                 } catch {
@@ -1254,8 +1277,8 @@ struct LocationSimulationView: View {
         let distance = distanceAlong(displayCoordinates)
         let fallbackSpeed = WayfarerSpeed.metersPerSecond(fromKmh: speedKmh)
         repeatPlayback = false
-        routeStartSelection = RouteSearchSelection(title: "\(sourceName) Start", coordinate: firstCoordinate)
-        routeEndSelection = RouteSearchSelection(title: "\(sourceName) End", coordinate: lastCoordinate)
+        routeStartSelection = RouteSearchSelection(title: "\(sourceName) 起點", coordinate: firstCoordinate)
+        routeEndSelection = RouteSearchSelection(title: "\(sourceName) 終點", coordinate: lastCoordinate)
         setRoutePlan(RouteSimulationPlan(
             displayCoordinates: displayCoordinates,
             distance: distance,
@@ -1276,27 +1299,39 @@ struct LocationSimulationView: View {
     }
 
     private func showImportError(_ error: Error) {
-        alertTitle = "Import Failed"
+        alertTitle = "匯入失敗"
         alertMessage = error.localizedDescription
         showAlert = true
     }
 
-    @ViewBuilder
     private var pinControls: some View {
-        if let coord = coordinate {
-            Text(String(format: "%.6f, %.6f", coord.latitude, coord.longitude))
-                .font(.footnote.monospaced())
-                .foregroundStyle(.secondary)
+        VStack(spacing: 10) {
+            if let coord = coordinate {
+                Text(String(format: "%.6f, %.6f", coord.latitude, coord.longitude))
+                    .font(.footnote.monospaced())
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("點選地圖放置圖釘，或按「輸入座標」")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
 
-            HStack(spacing: 12) {
-                Button("Stop", action: clear)
+            HStack(spacing: 10) {
+                Button("停止", action: clear)
                     .buttonStyle(.bordered)
                     .tint(.red)
                     .disabled(!pairingExists || isBusy || !hasActiveSimulation)
 
-                Button("Simulate Location", action: simulate)
+                Button("瞬移", action: simulate)
                     .buttonStyle(.borderedProminent)
-                    .disabled(!pairingExists || isBusy || isLoadingRoute)
+                    .disabled(!pairingExists || isBusy || isLoadingRoute || coordinate == nil)
+
+                Button {
+                    showCoordinateInput = true
+                } label: {
+                    Label("輸入座標", systemImage: "keyboard")
+                }
+                .buttonStyle(.bordered)
 
                 Button {
                     showSaveBookmark = true
@@ -1305,18 +1340,8 @@ struct LocationSimulationView: View {
                 }
                 .buttonStyle(.bordered)
                 .tint(.blue)
-                .disabled(isRouteRunning)
+                .disabled(coordinate == nil || isRouteRunning)
             }
-
-            Button("Navigate Here from Current Location") {
-                navigateToPin()
-            }
-            .buttonStyle(.bordered)
-            .disabled(!pairingExists || isBusy || isLoadingRoute || simulationSession.coordinate == nil)
-        } else {
-            Text("Tap map to drop pin")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
         }
     }
 
@@ -1338,16 +1363,20 @@ struct LocationSimulationView: View {
             TravelModeSpeedBar(
                 modeRaw: $travelModeRaw,
                 speedKmh: $speedKmh,
-                modeLocked: isRouteRunning
+                modeLocked: false
             )
 
+            Text("切換模式只會調整速度，路線不變；播放中也可以直接改速度。")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
             HStack(spacing: 12) {
-                Button("Stop", action: clear)
+                Button("停止", action: clear)
                     .buttonStyle(.bordered)
                     .tint(.red)
                     .disabled(!pairingExists || isBusy || !hasActiveSimulation)
 
-                Button("Play Route", action: simulateRoute)
+                Button("播放路線", action: simulateRoute)
                     .buttonStyle(.borderedProminent)
                     .disabled(
                         !pairingExists ||
@@ -1359,12 +1388,12 @@ struct LocationSimulationView: View {
                     )
 
                 if isRouteRunning {
-                    Button(isPlaybackPaused ? "Resume" : "Pause") {
+                    Button(isPlaybackPaused ? "繼續" : "暫停") {
                         isPlaybackPaused.toggle()
                     }
                     .buttonStyle(.bordered)
                 } else {
-                    Button("Reset", action: resetRouteSelection)
+                    Button("重設", action: resetRouteSelection)
                         .buttonStyle(.bordered)
                         .disabled(isBusy)
                 }
@@ -1375,9 +1404,9 @@ struct LocationSimulationView: View {
     private func simulate() {
         guard pairingExists, let coord = coordinate, !isBusy else { return }
         runLocationCommand(
-            errorTitle: "Simulation Failed",
+            errorTitle: "瞬移失敗",
             errorMessage: { code in
-                "Could not simulate location (error \(code)). Make sure the device is connected and the DDI is mounted."
+                "無法設定位置（錯誤 \(code)）。請確認 LocalDevVPN 已開啟、已連上 Wi-Fi，且配對檔有效。"
             },
             operation: { locationUpdateCode(for: coord) }
         ) {
@@ -1398,9 +1427,9 @@ struct LocationSimulationView: View {
         stopResendLoop()
         cancelRoutePlayback(resetMarker: false)
         runLocationCommand(
-            errorTitle: "Route Simulation Failed",
+            errorTitle: "路線模擬失敗",
             errorMessage: { code in
-                "Could not start route simulation (error \(code)). Make sure the device is connected and the DDI is mounted."
+                "無法開始路線模擬（錯誤 \(code)）。請確認 LocalDevVPN 已開啟、已連上 Wi-Fi，且配對檔有效。"
             },
             operation: { locationUpdateCode(for: firstCoordinate) }
         ) {
@@ -1449,8 +1478,8 @@ struct LocationSimulationView: View {
         stopResendLoop()
         LocationSimulationSession.shared.clearRoute()
         runLocationCommand(
-            errorTitle: "Clear Failed",
-            errorMessage: { code in "Could not clear simulated location (error \(code))." },
+            errorTitle: "停止失敗",
+            errorMessage: { code in "無法停止模擬（錯誤 \(code)）。" },
             operation: clear_simulated_location
         ) {
             endBackgroundTask()
@@ -1553,7 +1582,7 @@ struct LocationSimulationView: View {
                     throw NSError(
                         domain: "RouteSimulation",
                         code: -1,
-                        userInfo: [NSLocalizedDescriptionKey: "No route was returned."]
+                        userInfo: [NSLocalizedDescriptionKey: "找不到路線。"]
                     )
                 }
 
@@ -1593,7 +1622,7 @@ struct LocationSimulationView: View {
                     guard routeRequestID == requestID else { return }
                     isLoadingRoute = false
                     isPrefetchingRouteSpeeds = false
-                    alertTitle = "Route Failed"
+                    alertTitle = "路線規劃失敗"
                     alertMessage = error.localizedDescription
                     showAlert = true
                 }
@@ -1659,9 +1688,9 @@ struct LocationSimulationView: View {
                         if let lastSuccessfulCoordinate {
                             startResendLoop(with: lastSuccessfulCoordinate)
                         }
-                        alertTitle = "Route Simulation Failed"
-                        alertMessage = "Could not continue route simulation (error \(code))."
-                        connectionErrorMessage = "Code \(code): Could not continue route simulation."
+                        alertTitle = "路線模擬失敗"
+                        alertMessage = "無法繼續路線模擬（錯誤 \(code)）。"
+                        connectionErrorMessage = "錯誤 \(code)：無法繼續路線模擬。"
                         showAlert = true
                     }
                     return
@@ -1711,11 +1740,59 @@ extension LocationSimulationView {
         TravelMode(rawValue: travelModeRaw) ?? .walking
     }
 
+    private var isMultiStopMode: Bool {
+        panelTab == .multi && !hasRouteContext
+    }
+
+    private var navigateHint: String {
+        if simulationSession.coordinate == nil {
+            return "尚未設定目前位置。請先到「瞬移」設定起點，或按「設定起點與終點」。"
+        }
+        if coordinate == nil {
+            return "在地圖上點選目的地，再按「從目前位置前往」。"
+        }
+        return "已選好目的地，按「從目前位置前往」規劃路線。"
+    }
+
+    private var navigateControls: some View {
+        VStack(spacing: 10) {
+            Text(navigateHint)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+
+            TravelModeSpeedBar(
+                modeRaw: $travelModeRaw,
+                speedKmh: $speedKmh,
+                modeLocked: false
+            )
+
+            HStack(spacing: 10) {
+                Button {
+                    showRouteSearch = true
+                } label: {
+                    Label("設定起點與終點", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
+                }
+                .buttonStyle(.bordered)
+                .disabled(isBusy)
+
+                Button("從目前位置前往") {
+                    navigateToPin()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(
+                    !pairingExists || isBusy || isLoadingRoute ||
+                    coordinate == nil || simulationSession.coordinate == nil
+                )
+            }
+        }
+    }
+
     private var multiStopControls: some View {
         VStack(spacing: 10) {
             Text(multiStops.isEmpty
-                 ? "Tap the map to add stops"
-                 : "\(multiStops.count) stop\(multiStops.count == 1 ? "" : "s") — tap the map to add more")
+                 ? "點選地圖加入站點，或貼上座標清單"
+                 : "已加入 \(multiStops.count) 個站點，可繼續點地圖加入")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
@@ -1725,56 +1802,53 @@ extension LocationSimulationView {
                 modeLocked: false
             )
 
-            Toggle("Loop (return to start and repeat)", isOn: $loopMultiStop)
-                .font(.footnote)
+            Toggle("循環（回到起點並重複）", isOn: $loopMultiStop)
+                .font(.subheadline)
+
+            Toggle("沿道路規劃（關閉則直線連接）", isOn: $followRoads)
+                .font(.subheadline)
 
             HStack(spacing: 8) {
-                Button("Undo") {
+                Button("復原") {
                     if !multiStops.isEmpty { multiStops.removeLast() }
                 }
                 .buttonStyle(.bordered)
                 .disabled(multiStops.isEmpty)
 
-                Button("Clear") {
+                Button("清除") {
                     multiStops.removeAll()
                 }
                 .buttonStyle(.bordered)
                 .disabled(multiStops.isEmpty)
 
-                Button("Build Route") {
+                Button {
+                    showStopListInput = true
+                } label: {
+                    Label("貼上清單", systemImage: "list.bullet.clipboard")
+                }
+                .buttonStyle(.bordered)
+
+                Button("建立路線") {
                     buildMultiStopRoute()
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(multiStops.count < 2 || isLoadingRoute)
-
-                Button("Cancel") {
-                    toggleMultiStopMode()
-                }
-                .buttonStyle(.bordered)
-                .tint(.red)
             }
         }
     }
 
-    private func toggleMultiStopMode() {
-        if isMultiStopMode {
-            isMultiStopMode = false
-            if routePlan == nil && !isLoadingRoute {
-                multiStops = []
-            }
-        } else {
-            guard !isRouteRunning else { return }
-            resetRouteSelection()
+    private func panelTabChanged() {
+        if panelTab == .multi {
             coordinate = nil
+        } else {
             multiStops = []
-            isMultiStopMode = true
         }
     }
 
     private func addStop(_ stopCoordinate: CLLocationCoordinate2D) {
-        guard multiStops.count < 25 else {
-            alertTitle = "Too Many Stops"
-            alertMessage = "A route can have at most 25 stops."
+        guard multiStops.count < 500 else {
+            alertTitle = "站點太多"
+            alertMessage = "一條路線最多 500 個站點。"
             showAlert = true
             return
         }
@@ -1784,14 +1858,21 @@ extension LocationSimulationView {
     private func navigateToPin() {
         guard let destination = coordinate,
               let start = simulationSession.coordinate else { return }
-        routeStartSelection = RouteSearchSelection(title: "Current Location", coordinate: start)
-        routeEndSelection = RouteSearchSelection(title: "Destination", coordinate: destination)
+        routeStartSelection = RouteSearchSelection(title: "目前位置", coordinate: start)
+        routeEndSelection = RouteSearchSelection(title: "目的地", coordinate: destination)
         coordinate = nil
         refreshRoute()
     }
 
     private func buildMultiStopRoute() {
         guard multiStops.count >= 2 else { return }
+        if followRoads && multiStops.count > 25 {
+            alertTitle = "站點太多"
+            alertMessage = "沿道路規劃最多支援 25 個站點。請關閉「沿道路規劃」改用直線連接，或減少站點。"
+            showAlert = true
+            return
+        }
+
         routeLoadTask?.cancel()
         routeSpeedPrefetchTask?.cancel()
         setRoutePlan(nil)
@@ -1801,21 +1882,29 @@ extension LocationSimulationView {
         routeRequestID = requestID
         isLoadingRoute = true
         isPrefetchingRouteSpeeds = false
-        isMultiStopMode = false
         coordinate = nil
 
         let stopCoordinates = multiStops.map(\.coordinate)
         let loop = loopMultiStop
         let mode = travelMode
+        let roads = followRoads
         let speedMps = WayfarerSpeed.metersPerSecond(fromKmh: speedKmh)
 
-        routeStartSelection = RouteSearchSelection(title: "Stop 1", coordinate: stopCoordinates[0])
+        routeStartSelection = RouteSearchSelection(title: "站點 1", coordinate: stopCoordinates[0])
         let lastStop = loop ? stopCoordinates[0] : stopCoordinates[stopCoordinates.count - 1]
-        routeEndSelection = RouteSearchSelection(title: loop ? "Stop 1" : "Stop \(stopCoordinates.count)", coordinate: lastStop)
+        routeEndSelection = RouteSearchSelection(
+            title: loop ? "站點 1" : "站點 \(stopCoordinates.count)",
+            coordinate: lastStop
+        )
 
         routeLoadTask = Task {
             do {
-                let built = try await WayfarerRouteBuilder.build(stops: stopCoordinates, loop: loop, mode: mode)
+                let built = try await WayfarerRouteBuilder.build(
+                    stops: stopCoordinates,
+                    loop: loop,
+                    mode: mode,
+                    followRoads: roads
+                )
                 guard !Task.isCancelled else { return }
 
                 let displayCoordinates = sampledRouteCoordinates(
@@ -1843,8 +1932,8 @@ extension LocationSimulationView {
                         position = .rect(routePolyline.boundingMapRect)
                     }
                     if built.straightLegCount > 0 {
-                        alertTitle = "Some Legs Use Straight Lines"
-                        alertMessage = "No road route was found for \(built.straightLegCount) leg(s), so a straight line is used for those."
+                        alertTitle = "部分路段改用直線"
+                        alertMessage = "有 \(built.straightLegCount) 段找不到道路路線，已改用直線連接。"
                         showAlert = true
                     }
                 }
@@ -1857,7 +1946,7 @@ extension LocationSimulationView {
                 await MainActor.run {
                     guard routeRequestID == requestID else { return }
                     isLoadingRoute = false
-                    alertTitle = "Route Failed"
+                    alertTitle = "路線規劃失敗"
                     alertMessage = error.localizedDescription
                     showAlert = true
                 }
@@ -1865,14 +1954,10 @@ extension LocationSimulationView {
         }
     }
 
+    /// Switching mode only changes the speed (to that mode's default); the route
+    /// and the current position are left alone.
     private func modeChanged() {
         speedKmh = travelMode.defaultSpeedKmh
-        guard !isRouteRunning, !isMultiStopMode, routePlan != nil else { return }
-        if multiStops.isEmpty {
-            refreshRoute()
-        } else {
-            buildMultiStopRoute()
-        }
     }
 
     private func rebuildFullPlaybackSamples() {
@@ -1887,6 +1972,11 @@ extension LocationSimulationView {
     /// Re-times the route for the current speed. While a route is playing, only the
     /// part still ahead of the current position is rebuilt.
     private func applySpeedChange() {
+        let clamped = min(max(speedKmh, 1), 300)
+        if clamped != speedKmh {
+            speedKmh = clamped
+            return
+        }
         guard let plan = routePlan else { return }
         let speedMps = WayfarerSpeed.metersPerSecond(fromKmh: speedKmh)
         let base = plan.displayCoordinates
@@ -1922,6 +2012,157 @@ extension LocationSimulationView {
                 expectedTravelTime: plan.distance / speedMps
             ))
         }
+    }
+}
+
+// MARK: - Wayfarer: coordinate input sheets
+
+private struct CoordinateInputSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var text = ""
+    @State private var errorMessage: String?
+    @FocusState private var fieldFocused: Bool
+
+    let onPlace: (CLLocationCoordinate2D) -> Void
+    let onTeleport: (CLLocationCoordinate2D) -> Void
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("輸入「緯度,經度」，例如 25.0330,121.5654")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                TextField("緯度,經度", text: $text)
+                    .textFieldStyle(.roundedBorder)
+                    .keyboardType(.numbersAndPunctuation)
+                    .autocorrectionDisabled()
+                    .focused($fieldFocused)
+
+                Button("貼上剪貼簿") {
+                    if let pasted = UIPasteboard.general.string {
+                        text = pasted
+                    }
+                }
+                .buttonStyle(.bordered)
+
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+
+                HStack(spacing: 12) {
+                    Button("只放置圖釘") { submit(teleport: false) }
+                        .buttonStyle(.bordered)
+                    Button("直接瞬移") { submit(teleport: true) }
+                        .buttonStyle(.borderedProminent)
+                }
+
+                Spacer()
+            }
+            .padding()
+            .navigationTitle("輸入座標")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("完成") { fieldFocused = false }
+                }
+            }
+            .onAppear { fieldFocused = true }
+        }
+        .presentationDetents([.medium])
+    }
+
+    private func submit(teleport: Bool) {
+        guard let first = CoordinateImportParser.parseInline(text).first else {
+            errorMessage = "格式不正確，請輸入「緯度,經度」。"
+            return
+        }
+        dismiss()
+        if teleport {
+            onTeleport(first)
+        } else {
+            onPlace(first)
+        }
+    }
+}
+
+private struct StopListInputSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var text = ""
+    @FocusState private var editorFocused: Bool
+
+    let onApply: ([CLLocationCoordinate2D]) -> Void
+
+    private var parsed: [CLLocationCoordinate2D] {
+        CoordinateImportParser.parseInline(text)
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("每行一組「緯度,經度」，例如：")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Text("-22.712348,-43.312467\n-22.711237,-43.312910")
+                    .font(.footnote.monospaced())
+                    .foregroundStyle(.secondary)
+
+                TextEditor(text: $text)
+                    .font(.body.monospaced())
+                    .focused($editorFocused)
+                    .frame(minHeight: 200)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.secondary.opacity(0.4))
+                    )
+
+                Text("已讀到 \(parsed.count) 個點")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 12) {
+                    Button("貼上剪貼簿") {
+                        if let pasted = UIPasteboard.general.string {
+                            text = pasted
+                        }
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("清空") { text = "" }
+                        .buttonStyle(.bordered)
+                        .disabled(text.isEmpty)
+
+                    Spacer()
+
+                    Button("套用並建立路線") {
+                        let coordinates = parsed
+                        dismiss()
+                        onApply(coordinates)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(parsed.count < 2)
+                }
+            }
+            .padding()
+            .navigationTitle("座標清單")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("完成") { editorFocused = false }
+                }
+            }
+        }
+        .presentationDetents([.large])
     }
 }
 
@@ -1975,7 +2216,7 @@ private struct RouteSearchSheet: View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 16) {
                 routeField(
-                    title: "Start",
+                    title: "起點",
                     icon: "circle.fill",
                     tint: .green,
                     text: $startQuery,
@@ -1984,7 +2225,7 @@ private struct RouteSearchSheet: View {
                 )
 
                 routeField(
-                    title: "End",
+                    title: "終點",
                     icon: "flag.checkered.circle.fill",
                     tint: .red,
                     text: $endQuery,
@@ -1999,7 +2240,7 @@ private struct RouteSearchSheet: View {
                 }
 
                 if isResolvingSelection {
-                    ProgressView("Resolving location…")
+                    ProgressView("正在解析地點…")
                         .font(.footnote)
                 } else if !activeResults.isEmpty {
                     ScrollView {
@@ -2033,7 +2274,7 @@ private struct RouteSearchSheet: View {
                     }
                     .frame(maxHeight: 260)
                 } else {
-                    Text("Search for a start and destination to build the route.")
+                    Text("請搜尋起點與終點以建立路線。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -2041,17 +2282,17 @@ private struct RouteSearchSheet: View {
                 Spacer(minLength: 0)
             }
             .padding(16)
-            .navigationTitle("Simulate Route")
+            .navigationTitle("設定路線")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    Button("取消") {
                         dismiss()
                     }
                 }
 
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Use Route") {
+                    Button("使用此路線") {
                         guard let startSelection, let endSelection else { return }
                         onApply(startSelection, endSelection)
                         dismiss()
@@ -2141,7 +2382,7 @@ private struct RouteSearchSheet: View {
                 isResolvingSelection = false
 
                 guard let item = response?.mapItems.first else {
-                    errorMessage = error?.localizedDescription ?? "Could not resolve that location."
+                    errorMessage = error?.localizedDescription ?? "無法解析這個地點。"
                     return
                 }
 
@@ -2178,9 +2419,9 @@ struct BookmarksView: View {
             Group {
                 if bookmarks.isEmpty {
                     ContentUnavailableView(
-                        "No Bookmarks",
+                        "沒有書籤",
                         systemImage: "bookmark.slash",
-                        description: Text("Drop a pin on the map and tap the bookmark icon to save a location.")
+                        description: Text("在地圖上放置圖釘，再點書籤圖示即可儲存地點。")
                     )
                 } else {
                     List {
@@ -2201,7 +2442,7 @@ struct BookmarksView: View {
                     }
                 }
             }
-            .navigationTitle("Bookmarks")
+            .navigationTitle("書籤")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if !bookmarks.isEmpty {

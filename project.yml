@@ -1,6 +1,7 @@
 name: Wayfarer
 options:
   bundleIdPrefix: com.mimi860821
+  developmentLanguage: en
   createIntermediateGroups: true
 packages:
   CodeEditorView:
