@@ -303,22 +303,31 @@ private func nearestSpeedLimit(
     return bestMatch.speed
 }
 
-/// At high speed, keep only every n-th point so updates stay roughly 0.5 s apart.
+/// At high speed, keep a point only once the path has moved far enough since the
+/// last kept point, so location updates stay roughly 0.5 s apart.
 private func decimatedForPlayback(
     _ coordinates: [CLLocationCoordinate2D],
     speed: CLLocationSpeed
 ) -> [CLLocationCoordinate2D] {
-    let step = Int(ceil(WayfarerSpeed.pathSpacing(forSpeed: speed) / RouteSimulationDefaults.pathSamplingDistance))
-    guard step > 1, coordinates.count > 2 else { return coordinates }
-
-    var result: [CLLocationCoordinate2D] = []
-    var index = 0
-    while index < coordinates.count {
-        result.append(coordinates[index])
-        index += step
+    let spacing = WayfarerSpeed.pathSpacing(forSpeed: speed)
+    guard spacing > RouteSimulationDefaults.pathSamplingDistance,
+          coordinates.count > 2,
+          let first = coordinates.first,
+          let last = coordinates.last else {
+        return coordinates
     }
-    if let last = coordinates.last, let lastKept = result.last,
-       last.latitude != lastKept.latitude || last.longitude != lastKept.longitude {
+
+    var result: [CLLocationCoordinate2D] = [first]
+    var lastKept = first
+    for coordinate in coordinates.dropFirst() {
+        let distance = CLLocation(latitude: lastKept.latitude, longitude: lastKept.longitude)
+            .distance(from: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude))
+        if distance >= spacing {
+            result.append(coordinate)
+            lastKept = coordinate
+        }
+    }
+    if lastKept.latitude != last.latitude || lastKept.longitude != last.longitude {
         result.append(last)
     }
     return result
