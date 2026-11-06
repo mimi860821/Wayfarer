@@ -198,6 +198,11 @@ struct SettingsView: View {
                 }
 
                 Section("Help") {
+                    NavigationLink {
+                        ConnectionDiagnosticsView()
+                    } label: {
+                        Label("連線診斷", systemImage: "stethoscope")
+                    }
                     Link(destination: SettingsLinks.pairingFileGuide) {
                         Label("Pairing File Guide", systemImage: "questionmark.circle")
                     }
