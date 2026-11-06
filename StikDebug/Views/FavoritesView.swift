@@ -392,7 +392,7 @@ struct FavoritesSheet: View {
         let mode = TravelMode(rawValue: route.modeRaw)?.title ?? "走路"
         let shape = RouteShape(rawValue: route.shapeRaw)?.title ?? "單程"
         let roads = route.followRoads ? "導航" : "直線"
-        return "\(route.stops.count) 個點 · \(mode) \(Int(route.speedKmh)) 公里/小時 · \(roads) · \(shape)"
+        return "\(route.stops.count) 個點 · \(mode) \(String(format: "%g", route.speedKmh)) 公里/小時 · \(roads) · \(shape)"
     }
 
     private var routesContent: some View {

@@ -303,11 +303,33 @@ private func nearestSpeedLimit(
     return bestMatch.speed
 }
 
+/// At high speed, keep only every n-th point so updates stay roughly 0.5 s apart.
+private func decimatedForPlayback(
+    _ coordinates: [CLLocationCoordinate2D],
+    speed: CLLocationSpeed
+) -> [CLLocationCoordinate2D] {
+    let step = Int(ceil(WayfarerSpeed.pathSpacing(forSpeed: speed) / RouteSimulationDefaults.pathSamplingDistance))
+    guard step > 1, coordinates.count > 2 else { return coordinates }
+
+    var result: [CLLocationCoordinate2D] = []
+    var index = 0
+    while index < coordinates.count {
+        result.append(coordinates[index])
+        index += step
+    }
+    if let last = coordinates.last, let lastKept = result.last,
+       last.latitude != lastKept.latitude || last.longitude != lastKept.longitude {
+        result.append(last)
+    }
+    return result
+}
+
 private func buildPlaybackSamples(
-    from displayCoordinates: [CLLocationCoordinate2D],
+    from sourceCoordinates: [CLLocationCoordinate2D],
     speedWays: [OpenStreetMapWay],
     fallbackSpeedMetersPerSecond: CLLocationSpeed
 ) -> [RoutePlaybackSample] {
+    let displayCoordinates = decimatedForPlayback(sourceCoordinates, speed: fallbackSpeedMetersPerSecond)
     guard let firstCoordinate = displayCoordinates.first else { return [] }
 
     var samples = [RoutePlaybackSample(coordinate: firstCoordinate, delayFromPrevious: 0)]
@@ -1107,6 +1129,9 @@ struct LocationSimulationView: View {
             importCoordinates(result)
         }
         .onAppear {
+            if TravelMode(rawValue: travelModeRaw) == nil {
+                travelModeRaw = TravelMode.walking.rawValue
+            }
             loadBookmarks()
             if let routeCoordinates = simulationSession.routeCoordinates {
                 coordinate = nil
@@ -1286,7 +1311,9 @@ struct LocationSimulationView: View {
 
         let displayCoordinates = sampledRouteCoordinates(
             from: coordinates,
-            targetDistance: RouteSimulationDefaults.pathSamplingDistance
+            targetDistance: WayfarerSpeed.pathSpacing(
+                forSpeed: WayfarerSpeed.metersPerSecond(fromKmh: speedKmh)
+            )
         )
 
         guard displayCoordinates.count > 1,
@@ -1613,6 +1640,31 @@ struct LocationSimulationView: View {
         let speedMps = WayfarerSpeed.metersPerSecond(fromKmh: speedKmh)
         repeatPlayback = false
 
+        if travelMode == .detect {
+            // Fast "detect" mode flies straight to the destination; no road routing.
+            let displayCoordinates = sampledRouteCoordinates(
+                from: [routeStart, routeEnd],
+                targetDistance: WayfarerSpeed.pathSpacing(forSpeed: speedMps)
+            )
+            let distance = WayfarerRouteBuilder.straightDistance(routeStart, routeEnd)
+            setRoutePlan(RouteSimulationPlan(
+                displayCoordinates: displayCoordinates,
+                distance: distance,
+                expectedTravelTime: distance / speedMps
+            ))
+            routePlaybackSamples = buildPlaybackSamples(
+                from: displayCoordinates,
+                speedWays: [],
+                fallbackSpeedMetersPerSecond: speedMps
+            )
+            isLoadingRoute = false
+            isPrefetchingRouteSpeeds = false
+            if let routePolyline {
+                position = .rect(routePolyline.boundingMapRect)
+            }
+            return
+        }
+
         routeLoadTask = Task {
             do {
                 let response = try await MKDirections(request: request).calculate()
@@ -1627,7 +1679,7 @@ struct LocationSimulationView: View {
 
                 let displayCoordinates = sampledRouteCoordinates(
                     from: route.polyline.coordinateArray,
-                    targetDistance: RouteSimulationDefaults.pathSamplingDistance
+                    targetDistance: WayfarerSpeed.pathSpacing(forSpeed: speedMps)
                 )
                 let routePlan = RouteSimulationPlan(
                     displayCoordinates: displayCoordinates,
@@ -1984,7 +2036,7 @@ extension LocationSimulationView {
 
                 let displayCoordinates = sampledRouteCoordinates(
                     from: built.coordinates,
-                    targetDistance: RouteSimulationDefaults.pathSamplingDistance
+                    targetDistance: WayfarerSpeed.pathSpacing(forSpeed: speedMps)
                 )
                 let plan = RouteSimulationPlan(
                     displayCoordinates: displayCoordinates,
@@ -2061,9 +2113,10 @@ extension LocationSimulationView {
         resetRouteSelection()
         coordinate = nil
 
-        if travelModeRaw != favorite.modeRaw {
+        let savedMode = (TravelMode(rawValue: favorite.modeRaw) ?? .walking).rawValue
+        if travelModeRaw != savedMode {
             suppressModeSpeedReset = true
-            travelModeRaw = favorite.modeRaw
+            travelModeRaw = savedMode
         }
         speedKmh = favorite.speedKmh
         followRoads = favorite.followRoads
@@ -2087,7 +2140,7 @@ extension LocationSimulationView {
     /// Re-times the route for the current speed. While a route is playing, only the
     /// part still ahead of the current position is rebuilt.
     private func applySpeedChange() {
-        let clamped = min(max(speedKmh, 1), 300)
+        let clamped = min(max(speedKmh, 1), WayfarerSpeed.maxKmh)
         if clamped != speedKmh {
             speedKmh = clamped
             return

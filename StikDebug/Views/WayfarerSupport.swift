@@ -13,33 +13,34 @@ import CoreLocation
 /// MapKit has no dedicated bicycle transport type.
 enum TravelMode: String, CaseIterable, Identifiable {
     case walking
-    case running
     case cycling
     case driving
+    /// Fast point-to-point travel in a straight line (no roads).
+    case detect
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .walking: return "走路"
-        case .running: return "跑步"
         case .cycling: return "騎車"
         case .driving: return "開車"
+        case .detect: return "偵測"
         }
     }
 
     var defaultSpeedKmh: Double {
         switch self {
         case .walking: return 5
-        case .running: return 9
-        case .cycling: return 18
+        case .cycling: return 19.5
         case .driving: return 40
+        case .detect: return 600
         }
     }
 
     var transportType: MKDirectionsTransportType {
         switch self {
-        case .driving: return .automobile
+        case .driving, .detect: return .automobile
         default: return .walking
         }
     }
@@ -79,8 +80,16 @@ enum RouteShape: String, CaseIterable, Identifiable {
 }
 
 enum WayfarerSpeed {
+    static let maxKmh: Double = 3000
+
     static func metersPerSecond(fromKmh kmh: Double) -> CLLocationSpeed {
         max(kmh, 0.5) / 3.6
+    }
+
+    /// Spacing between route points so that a location update is sent about every
+    /// half second: never denser than 10 m, wider at high speed.
+    static func pathSpacing(forSpeed metersPerSecond: CLLocationSpeed) -> CLLocationDistance {
+        max(10, metersPerSecond * 0.5)
     }
 }
 
@@ -233,7 +242,7 @@ struct TravelModeSpeedBar: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Stepper("", value: $speedKmh, in: 1...300, step: 1)
+                Stepper("", value: $speedKmh, in: 1...3000, step: 1)
                     .labelsHidden()
             }
             .toolbar {
