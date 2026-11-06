@@ -759,6 +759,17 @@ struct LocationSimulationView: View {
     @State private var simulatedCoordinate: CLLocationCoordinate2D?
     @State private var routeRequestID = UUID()
 
+    // Wayfarer additions
+    @AppStorage("wayfarer.travelMode") private var travelModeRaw = TravelMode.walking.rawValue
+    @AppStorage("wayfarer.speedKmh") private var speedKmh: Double = 5
+    @State private var isMultiStopMode = false
+    @State private var multiStops: [RouteStop] = []
+    @State private var loopMultiStop = false
+    @State private var repeatPlayback = false
+    @State private var isPlaybackPaused = false
+    @State private var playbackCursor = 1
+    @State private var playbackGeneration = 0
+
     private static let routeDurationFormatter: DateComponentsFormatter = {
         let formatter = DateComponentsFormatter()
         formatter.allowedUnits = [.hour, .minute]
@@ -898,11 +909,11 @@ struct LocationSimulationView: View {
                             MapPolyline(routePolyline)
                                 .stroke(.blue.opacity(0.8), lineWidth: 5)
                         }
-                        if let routeStartCoordinate {
+                        if let routeStartCoordinate, multiStops.isEmpty {
                             Marker("Start", coordinate: routeStartCoordinate)
                                 .tint(.green)
                         }
-                        if let routeEndCoordinate {
+                        if let routeEndCoordinate, multiStops.isEmpty {
                             Marker("End", coordinate: routeEndCoordinate)
                                 .tint(.red)
                         }
@@ -914,11 +925,19 @@ struct LocationSimulationView: View {
                         Marker("Pin", coordinate: coordinate)
                             .tint(.red)
                     }
+                    ForEach(Array(multiStops.enumerated()), id: \.element.id) { index, stop in
+                        Marker("\(index + 1)", coordinate: stop.coordinate)
+                            .tint(.orange)
+                    }
                 }
                 .mapStyle(.standard(elevation: .realistic))
                 .onTapGesture { point in
                     if let loc = proxy.convert(point, from: .local) {
-                        applySelection(loc)
+                        if isMultiStopMode {
+                            addStop(loc)
+                        } else {
+                            applySelection(loc)
+                        }
                     }
                 }
                 .mapControls {
@@ -951,7 +970,9 @@ struct LocationSimulationView: View {
                             .font(.footnote)
                     }
 
-                    if hasRouteContext {
+                    if isMultiStopMode {
+                        multiStopControls
+                    } else if hasRouteContext {
                         routeControls
                     } else {
                         pinControls
@@ -1001,6 +1022,14 @@ struct LocationSimulationView: View {
                 }
                 .disabled(isBusy || isRouteRunning || isImportingCoordinates)
                 .accessibilityLabel("Import Coordinates")
+
+                Button {
+                    toggleMultiStopMode()
+                } label: {
+                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                }
+                .disabled(isBusy || isRouteRunning)
+                .accessibilityLabel("Multi-stop Route")
             }
             ToolbarItem(placement: .topBarTrailing) {
                 TextField("Search location...", text: $searchText)
@@ -1071,6 +1100,12 @@ struct LocationSimulationView: View {
                 coordinate = activeCoordinate
                 simulatedCoordinate = activeCoordinate
             }
+        }
+        .onChange(of: travelModeRaw) { _, _ in
+            modeChanged()
+        }
+        .onChange(of: speedKmh) { _, _ in
+            applySpeedChange()
         }
         .onDisappear {
             routeLoadTask?.cancel()
@@ -1217,7 +1252,8 @@ struct LocationSimulationView: View {
         }
 
         let distance = distanceAlong(displayCoordinates)
-        let fallbackSpeed = RouteSimulationDefaults.importedRouteFallbackSpeedMetersPerSecond
+        let fallbackSpeed = WayfarerSpeed.metersPerSecond(fromKmh: speedKmh)
+        repeatPlayback = false
         routeStartSelection = RouteSearchSelection(title: "\(sourceName) Start", coordinate: firstCoordinate)
         routeEndSelection = RouteSearchSelection(title: "\(sourceName) End", coordinate: lastCoordinate)
         setRoutePlan(RouteSimulationPlan(
@@ -1230,21 +1266,13 @@ struct LocationSimulationView: View {
             position = .rect(routePolyline.boundingMapRect)
         }
 
-        let requestID = UUID()
-        routeRequestID = requestID
-        isPrefetchingRouteSpeeds = true
-        routeSpeedPrefetchTask = Task.detached(priority: .utility) {
-            let playbackSamples = await prefetchRoutePlaybackSamples(
-                displayCoordinates: displayCoordinates,
-                fallbackSpeedMetersPerSecond: fallbackSpeed
-            )
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                guard routeRequestID == requestID else { return }
-                routePlaybackSamples = playbackSamples
-                isPrefetchingRouteSpeeds = false
-            }
-        }
+        routeRequestID = UUID()
+        isPrefetchingRouteSpeeds = false
+        routePlaybackSamples = buildPlaybackSamples(
+            from: displayCoordinates,
+            speedWays: [],
+            fallbackSpeedMetersPerSecond: fallbackSpeed
+        )
     }
 
     private func showImportError(_ error: Error) {
@@ -1279,6 +1307,12 @@ struct LocationSimulationView: View {
                 .tint(.blue)
                 .disabled(isRouteRunning)
             }
+
+            Button("Navigate Here from Current Location") {
+                navigateToPin()
+            }
+            .buttonStyle(.bordered)
+            .disabled(!pairingExists || isBusy || isLoadingRoute || simulationSession.coordinate == nil)
         } else {
             Text("Tap map to drop pin")
                 .font(.subheadline)
@@ -1301,7 +1335,11 @@ struct LocationSimulationView: View {
                     .foregroundStyle(.secondary)
             }
 
-            routeAttributionLink
+            TravelModeSpeedBar(
+                modeRaw: $travelModeRaw,
+                speedKmh: $speedKmh,
+                modeLocked: isRouteRunning
+            )
 
             HStack(spacing: 12) {
                 Button("Stop", action: clear)
@@ -1320,9 +1358,16 @@ struct LocationSimulationView: View {
                         routePlaybackSamples.isEmpty
                     )
 
-                Button("Reset", action: resetRouteSelection)
+                if isRouteRunning {
+                    Button(isPlaybackPaused ? "Resume" : "Pause") {
+                        isPlaybackPaused.toggle()
+                    }
                     .buttonStyle(.bordered)
-                    .disabled(isBusy || isRouteRunning)
+                } else {
+                    Button("Reset", action: resetRouteSelection)
+                        .buttonStyle(.bordered)
+                        .disabled(isBusy)
+                }
             }
         }
     }
@@ -1441,6 +1486,7 @@ struct LocationSimulationView: View {
     private func cancelRoutePlayback(resetMarker: Bool) {
         routePlaybackTask?.cancel()
         routePlaybackTask = nil
+        isPlaybackPaused = false
         if resetMarker {
             routePlaybackCoordinate = nil
         }
@@ -1451,6 +1497,7 @@ struct LocationSimulationView: View {
         if hasRouteContext {
             resetRouteSelection()
         }
+        multiStops = []
         self.coordinate = coordinate
     }
 
@@ -1467,6 +1514,9 @@ struct LocationSimulationView: View {
         routePlaybackCoordinate = nil
         isLoadingRoute = false
         isPrefetchingRouteSpeeds = false
+        multiStops = []
+        repeatPlayback = false
+        isPlaybackPaused = false
     }
 
     private func refreshRoute() {
@@ -1491,7 +1541,9 @@ struct LocationSimulationView: View {
         request.source = MKMapItem(placemark: MKPlacemark(coordinate: routeStart))
         request.destination = MKMapItem(placemark: MKPlacemark(coordinate: routeEnd))
         request.requestsAlternateRoutes = false
-        request.transportType = .automobile
+        request.transportType = travelMode.transportType
+        let speedMps = WayfarerSpeed.metersPerSecond(fromKmh: speedKmh)
+        repeatPlayback = false
 
         routeLoadTask = Task {
             do {
@@ -1501,7 +1553,7 @@ struct LocationSimulationView: View {
                     throw NSError(
                         domain: "RouteSimulation",
                         code: -1,
-                        userInfo: [NSLocalizedDescriptionKey: "No drivable route was returned."]
+                        userInfo: [NSLocalizedDescriptionKey: "No route was returned."]
                     )
                 }
 
@@ -1512,37 +1564,22 @@ struct LocationSimulationView: View {
                 let routePlan = RouteSimulationPlan(
                     displayCoordinates: displayCoordinates,
                     distance: route.distance,
-                    expectedTravelTime: route.expectedTravelTime
+                    expectedTravelTime: route.distance / speedMps
+                )
+                let playbackSamples = buildPlaybackSamples(
+                    from: displayCoordinates,
+                    speedWays: [],
+                    fallbackSpeedMetersPerSecond: speedMps
                 )
 
                 await MainActor.run {
                     guard routeRequestID == requestID else { return }
                     self.setRoutePlan(routePlan)
+                    routePlaybackSamples = playbackSamples
                     isLoadingRoute = false
-                    isPrefetchingRouteSpeeds = true
+                    isPrefetchingRouteSpeeds = false
                     if let routePolyline {
                         position = .rect(routePolyline.boundingMapRect)
-                    }
-                }
-
-                let fallbackSpeed = route.expectedTravelTime > 0
-                    ? route.distance / route.expectedTravelTime
-                    : 13.4
-
-                await MainActor.run {
-                    guard routeRequestID == requestID else { return }
-                    routeSpeedPrefetchTask?.cancel()
-                    routeSpeedPrefetchTask = Task.detached(priority: .utility) {
-                        let playbackSamples = await prefetchRoutePlaybackSamples(
-                            displayCoordinates: displayCoordinates,
-                            fallbackSpeedMetersPerSecond: fallbackSpeed
-                        )
-                        guard !Task.isCancelled else { return }
-                        await MainActor.run {
-                            guard routeRequestID == requestID else { return }
-                            routePlaybackSamples = playbackSamples
-                            isPrefetchingRouteSpeeds = false
-                        }
                     }
                 }
             } catch is CancellationError {
@@ -1565,15 +1602,52 @@ struct LocationSimulationView: View {
     }
 
     private func startRoutePlayback(routeID: UUID) {
+        isPlaybackPaused = false
+        playbackCursor = 1
+        playbackGeneration += 1
         routePlaybackTask = Task {
             var lastSuccessfulCoordinate = routePlaybackSamples.first?.coordinate
 
-            for sample in routePlaybackSamples.dropFirst() {
+            while !Task.isCancelled {
+                // Paused: keep re-sending the current position so it does not expire.
+                var pausedTicks = 0
+                while isPlaybackPaused {
+                    guard !Task.isCancelled,
+                          LocationSimulationSession.shared.isCurrentRoute(routeID) else {
+                        return
+                    }
+                    try? await Task.sleep(for: .seconds(1))
+                    pausedTicks += 1
+                    if pausedTicks % 4 == 0, let keepCoordinate = lastSuccessfulCoordinate {
+                        _ = await sendLocationUpdate(for: keepCoordinate)
+                    }
+                }
+                guard LocationSimulationSession.shared.isCurrentRoute(routeID) else { return }
+
+                let samples = routePlaybackSamples
+                let cursor = playbackCursor
+
+                if cursor >= samples.count {
+                    if repeatPlayback, samples.count > 1 {
+                        await MainActor.run {
+                            rebuildFullPlaybackSamples()
+                            playbackCursor = 1
+                            playbackGeneration += 1
+                        }
+                        try? await Task.sleep(for: .milliseconds(500))
+                        continue
+                    }
+                    break
+                }
+
+                let generation = playbackGeneration
+                let sample = samples[cursor]
                 try? await Task.sleep(for: .seconds(sample.delayFromPrevious))
                 guard !Task.isCancelled,
                       LocationSimulationSession.shared.isCurrentRoute(routeID) else {
                     return
                 }
+                if isPlaybackPaused || generation != playbackGeneration { continue }
 
                 let code = await sendLocationUpdate(for: sample.coordinate)
                 guard LocationSimulationSession.shared.isCurrentRoute(routeID) else { return }
@@ -1595,6 +1669,9 @@ struct LocationSimulationView: View {
 
                 lastSuccessfulCoordinate = sample.coordinate
                 await MainActor.run {
+                    if generation == playbackGeneration {
+                        playbackCursor = cursor + 1
+                    }
                     routePlaybackCoordinate = sample.coordinate
                     LocationSimulationSession.shared.updateCoordinate(sample.coordinate)
                 }
@@ -1624,6 +1701,227 @@ struct LocationSimulationView: View {
 
     private func locationUpdateCode(for coordinate: CLLocationCoordinate2D) -> Int32 {
         simulate_location(deviceIP, coordinate.latitude, coordinate.longitude, pairingFilePath)
+    }
+}
+
+// MARK: - Wayfarer: modes, speed, multi-stop routes
+
+extension LocationSimulationView {
+    private var travelMode: TravelMode {
+        TravelMode(rawValue: travelModeRaw) ?? .walking
+    }
+
+    private var multiStopControls: some View {
+        VStack(spacing: 10) {
+            Text(multiStops.isEmpty
+                 ? "Tap the map to add stops"
+                 : "\(multiStops.count) stop\(multiStops.count == 1 ? "" : "s") — tap the map to add more")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            TravelModeSpeedBar(
+                modeRaw: $travelModeRaw,
+                speedKmh: $speedKmh,
+                modeLocked: false
+            )
+
+            Toggle("Loop (return to start and repeat)", isOn: $loopMultiStop)
+                .font(.footnote)
+
+            HStack(spacing: 8) {
+                Button("Undo") {
+                    if !multiStops.isEmpty { multiStops.removeLast() }
+                }
+                .buttonStyle(.bordered)
+                .disabled(multiStops.isEmpty)
+
+                Button("Clear") {
+                    multiStops.removeAll()
+                }
+                .buttonStyle(.bordered)
+                .disabled(multiStops.isEmpty)
+
+                Button("Build Route") {
+                    buildMultiStopRoute()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(multiStops.count < 2 || isLoadingRoute)
+
+                Button("Cancel") {
+                    toggleMultiStopMode()
+                }
+                .buttonStyle(.bordered)
+                .tint(.red)
+            }
+        }
+    }
+
+    private func toggleMultiStopMode() {
+        if isMultiStopMode {
+            isMultiStopMode = false
+            if routePlan == nil && !isLoadingRoute {
+                multiStops = []
+            }
+        } else {
+            guard !isRouteRunning else { return }
+            resetRouteSelection()
+            coordinate = nil
+            multiStops = []
+            isMultiStopMode = true
+        }
+    }
+
+    private func addStop(_ stopCoordinate: CLLocationCoordinate2D) {
+        guard multiStops.count < 25 else {
+            alertTitle = "Too Many Stops"
+            alertMessage = "A route can have at most 25 stops."
+            showAlert = true
+            return
+        }
+        multiStops.append(RouteStop(coordinate: stopCoordinate))
+    }
+
+    private func navigateToPin() {
+        guard let destination = coordinate,
+              let start = simulationSession.coordinate else { return }
+        routeStartSelection = RouteSearchSelection(title: "Current Location", coordinate: start)
+        routeEndSelection = RouteSearchSelection(title: "Destination", coordinate: destination)
+        coordinate = nil
+        refreshRoute()
+    }
+
+    private func buildMultiStopRoute() {
+        guard multiStops.count >= 2 else { return }
+        routeLoadTask?.cancel()
+        routeSpeedPrefetchTask?.cancel()
+        setRoutePlan(nil)
+        routePlaybackSamples = []
+
+        let requestID = UUID()
+        routeRequestID = requestID
+        isLoadingRoute = true
+        isPrefetchingRouteSpeeds = false
+        isMultiStopMode = false
+        coordinate = nil
+
+        let stopCoordinates = multiStops.map(\.coordinate)
+        let loop = loopMultiStop
+        let mode = travelMode
+        let speedMps = WayfarerSpeed.metersPerSecond(fromKmh: speedKmh)
+
+        routeStartSelection = RouteSearchSelection(title: "Stop 1", coordinate: stopCoordinates[0])
+        let lastStop = loop ? stopCoordinates[0] : stopCoordinates[stopCoordinates.count - 1]
+        routeEndSelection = RouteSearchSelection(title: loop ? "Stop 1" : "Stop \(stopCoordinates.count)", coordinate: lastStop)
+
+        routeLoadTask = Task {
+            do {
+                let built = try await WayfarerRouteBuilder.build(stops: stopCoordinates, loop: loop, mode: mode)
+                guard !Task.isCancelled else { return }
+
+                let displayCoordinates = sampledRouteCoordinates(
+                    from: built.coordinates,
+                    targetDistance: RouteSimulationDefaults.pathSamplingDistance
+                )
+                let plan = RouteSimulationPlan(
+                    displayCoordinates: displayCoordinates,
+                    distance: built.distance,
+                    expectedTravelTime: built.distance / speedMps
+                )
+                let samples = buildPlaybackSamples(
+                    from: displayCoordinates,
+                    speedWays: [],
+                    fallbackSpeedMetersPerSecond: speedMps
+                )
+
+                await MainActor.run {
+                    guard routeRequestID == requestID else { return }
+                    setRoutePlan(plan)
+                    routePlaybackSamples = samples
+                    repeatPlayback = loop
+                    isLoadingRoute = false
+                    if let routePolyline {
+                        position = .rect(routePolyline.boundingMapRect)
+                    }
+                    if built.straightLegCount > 0 {
+                        alertTitle = "Some Legs Use Straight Lines"
+                        alertMessage = "No road route was found for \(built.straightLegCount) leg(s), so a straight line is used for those."
+                        showAlert = true
+                    }
+                }
+            } catch is CancellationError {
+                await MainActor.run {
+                    guard routeRequestID == requestID else { return }
+                    isLoadingRoute = false
+                }
+            } catch {
+                await MainActor.run {
+                    guard routeRequestID == requestID else { return }
+                    isLoadingRoute = false
+                    alertTitle = "Route Failed"
+                    alertMessage = error.localizedDescription
+                    showAlert = true
+                }
+            }
+        }
+    }
+
+    private func modeChanged() {
+        speedKmh = travelMode.defaultSpeedKmh
+        guard !isRouteRunning, !isMultiStopMode, routePlan != nil else { return }
+        if multiStops.isEmpty {
+            refreshRoute()
+        } else {
+            buildMultiStopRoute()
+        }
+    }
+
+    private func rebuildFullPlaybackSamples() {
+        guard let plan = routePlan else { return }
+        routePlaybackSamples = buildPlaybackSamples(
+            from: plan.displayCoordinates,
+            speedWays: [],
+            fallbackSpeedMetersPerSecond: WayfarerSpeed.metersPerSecond(fromKmh: speedKmh)
+        )
+    }
+
+    /// Re-times the route for the current speed. While a route is playing, only the
+    /// part still ahead of the current position is rebuilt.
+    private func applySpeedChange() {
+        guard let plan = routePlan else { return }
+        let speedMps = WayfarerSpeed.metersPerSecond(fromKmh: speedKmh)
+        let base = plan.displayCoordinates
+        guard base.count > 1 else { return }
+
+        if routePlaybackTask != nil, let current = routePlaybackCoordinate {
+            let currentLocation = CLLocation(latitude: current.latitude, longitude: current.longitude)
+            var bestIndex = 0
+            var bestDistance = CLLocationDistance.greatestFiniteMagnitude
+            for (index, candidate) in base.enumerated() {
+                let candidateDistance = currentLocation.distance(
+                    from: CLLocation(latitude: candidate.latitude, longitude: candidate.longitude)
+                )
+                if candidateDistance < bestDistance {
+                    bestDistance = candidateDistance
+                    bestIndex = index
+                }
+            }
+            let remaining = [current] + Array(base.dropFirst(min(bestIndex + 1, base.count)))
+            let samples = buildPlaybackSamples(
+                from: remaining,
+                speedWays: [],
+                fallbackSpeedMetersPerSecond: speedMps
+            )
+            routePlaybackSamples = samples
+            playbackGeneration += 1
+            playbackCursor = 1
+        } else if !isRouteRunning {
+            rebuildFullPlaybackSamples()
+            setRoutePlan(RouteSimulationPlan(
+                displayCoordinates: base,
+                distance: plan.distance,
+                expectedTravelTime: plan.distance / speedMps
+            ))
+        }
     }
 }
 
