@@ -15,7 +15,7 @@ enum TravelMode: String, CaseIterable, Identifiable {
     case walking
     case cycling
     case driving
-    /// Fast point-to-point travel in a straight line (no roads).
+    /// Very fast travel along roads, with fewer route points.
     case detect
 
     var id: String { rawValue }
@@ -86,10 +86,14 @@ enum WayfarerSpeed {
         max(kmh, 0.5) / 3.6
     }
 
-    /// Spacing between route points so that a location update is sent about every
-    /// half second: never denser than 10 m, wider at high speed.
+    /// Above this speed (150 km/h) location updates are sent about once a second
+    /// instead of twice, so very fast routes use fewer points (corners may be cut).
+    static let fastSpeedThreshold: CLLocationSpeed = 150 / 3.6
+
+    /// Spacing between route points: never denser than 10 m, wider at high speed.
     static func pathSpacing(forSpeed metersPerSecond: CLLocationSpeed) -> CLLocationDistance {
-        max(10, metersPerSecond * 0.5)
+        let interval: Double = metersPerSecond > fastSpeedThreshold ? 1.0 : 0.5
+        return max(10, metersPerSecond * interval)
     }
 }
 

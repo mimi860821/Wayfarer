@@ -1649,31 +1649,6 @@ struct LocationSimulationView: View {
         let speedMps = WayfarerSpeed.metersPerSecond(fromKmh: speedKmh)
         repeatPlayback = false
 
-        if travelMode == .detect {
-            // Fast "detect" mode flies straight to the destination; no road routing.
-            let displayCoordinates = sampledRouteCoordinates(
-                from: [routeStart, routeEnd],
-                targetDistance: WayfarerSpeed.pathSpacing(forSpeed: speedMps)
-            )
-            let distance = WayfarerRouteBuilder.straightDistance(routeStart, routeEnd)
-            setRoutePlan(RouteSimulationPlan(
-                displayCoordinates: displayCoordinates,
-                distance: distance,
-                expectedTravelTime: distance / speedMps
-            ))
-            routePlaybackSamples = buildPlaybackSamples(
-                from: displayCoordinates,
-                speedWays: [],
-                fallbackSpeedMetersPerSecond: speedMps
-            )
-            isLoadingRoute = false
-            isPrefetchingRouteSpeeds = false
-            if let routePolyline {
-                position = .rect(routePolyline.boundingMapRect)
-            }
-            return
-        }
-
         routeLoadTask = Task {
             do {
                 let response = try await MKDirections(request: request).calculate()
