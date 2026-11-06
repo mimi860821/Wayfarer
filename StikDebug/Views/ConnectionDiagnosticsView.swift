@@ -106,6 +106,20 @@ struct ConnectionDiagnosticsView: View {
             }
 
             report("")
+            report("== 5. 直接連本機位址（不經過 VPN 轉換）==")
+            var localHosts: [(String, String)] = [("本機迴路", "127.0.0.1")]
+            var seen: Set<String> = ["127.0.0.1"]
+            for item in interfaces where !seen.contains(item.address) {
+                seen.insert(item.address)
+                localHosts.append((item.name, item.address))
+            }
+            for (label, address) in localHosts {
+                for port in ports {
+                    report("\(label) \(address):\(port) → " + DiagnosticsProbe.tcpProbe(host: address, port: port, boundInterface: nil))
+                }
+            }
+
+            report("")
             report("診斷完成。")
             await MainActor.run { isRunning = false }
         }
@@ -178,22 +192,52 @@ enum DiagnosticsProbe {
                 using: parameters
             )
             let queue = DispatchQueue(label: "wayfarer.diagnostics.browse")
+            var results: [NWBrowser.Result] = []
             var found: [String] = []
+            var connections: [NWConnection] = []
             var finished = false
 
-            browser.browseResultsChangedHandler = { results, _ in
-                found = results.map { result in
-                    let interfaces = result.interfaces.map { $0.name }.joined(separator: ",")
-                    return "\(result.endpoint) 介面：\(interfaces.isEmpty ? "?" : interfaces)"
-                }
+            browser.browseResultsChangedHandler = { newResults, _ in
+                results = Array(newResults)
             }
             browser.start(queue: queue)
 
             queue.asyncAfter(deadline: .now() + seconds) {
-                guard !finished else { return }
-                finished = true
                 browser.cancel()
-                continuation.resume(returning: found.isEmpty ? ["沒有找到任何服務"] : found)
+
+                if results.isEmpty {
+                    continuation.resume(returning: ["沒有找到任何服務"])
+                    return
+                }
+
+                for (index, result) in results.prefix(4).enumerated() {
+                    let interfaces = result.interfaces.map { $0.name }.joined(separator: ",")
+                    found.append("服務 \(index + 1)：介面 \(interfaces.isEmpty ? "?" : interfaces)")
+                    let connection = NWConnection(to: result.endpoint, using: parameters)
+                    connections.append(connection)
+                    connection.stateUpdateHandler = { state in
+                        switch state {
+                        case .ready, .waiting, .failed:
+                            let path = connection.currentPath
+                            let remote = path?.remoteEndpoint.map { "\($0)" } ?? "?"
+                            let local = path?.localEndpoint.map { "\($0)" } ?? "?"
+                            let line = "  服務 \(index + 1) 狀態 \(state)；對方 \(remote)；本機 \(local)"
+                            if !found.contains(line) {
+                                found.append(line)
+                            }
+                        default:
+                            break
+                        }
+                    }
+                    connection.start(queue: queue)
+                }
+
+                queue.asyncAfter(deadline: .now() + 2.5) {
+                    guard !finished else { return }
+                    finished = true
+                    connections.forEach { $0.cancel() }
+                    continuation.resume(returning: found)
+                }
             }
         }
     }
