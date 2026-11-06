@@ -10,6 +10,7 @@ import UIKit
 enum AppBootstrapper {
     static func configure() {
         IdeviceLogFileManager.shared.prepareForLogging()
+        NetworkStateMonitor.shared.start()
         registerDefaultSettings()
         ensureKeepAliveSelection()
         applyDocumentPickerCopyWorkaround()

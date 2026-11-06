@@ -199,6 +199,11 @@ struct SettingsView: View {
 
                 Section("Help") {
                     NavigationLink {
+                        OfflineGuideView()
+                    } label: {
+                        Label("沒有 Wi-Fi 時怎麼使用", systemImage: "airplane")
+                    }
+                    NavigationLink {
                         ConnectionDiagnosticsView()
                     } label: {
                         Label("連線診斷", systemImage: "stethoscope")

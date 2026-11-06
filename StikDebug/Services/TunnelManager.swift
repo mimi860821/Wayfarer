@@ -110,7 +110,7 @@ final class TunnelManager: ObservableObject {
         }
 
         showAlert(
-            title: "Connection Error",
+            title: "連線失敗",
             message: tunnelConnectionAlertMessage(for: error),
             showOk: false,
             showTryAgain: true
@@ -158,22 +158,27 @@ private func tunnelConnectionLogMessage(for error: NSError) -> String {
 }
 
 private func tunnelConnectionAlertMessage(for error: NSError) -> String {
-    let pairingInstructions: String
-    if #available(iOS 27.0, *) {
-        pairingInstructions = "Generate and place a fresh pairing file using the built-in pairing menu in Settings or iloader."
-    } else {
-        pairingInstructions = "Generate and place a fresh pairing file using iloader."
+    var hint = ""
+    if NetworkStateMonitor.shared.isCellularOnly {
+        hint = """
+        偵測到：Wi-Fi 關閉、行動數據開啟。這個狀態下手機的服務會拒絕連線。
+
+        處理方式：先開 LocalDevVPN 並連線，再開飛航模式，回到 Wayfarer 重試；成功後可以關掉飛航模式。
+        詳細步驟在「設定 → 說明 → 沒有 Wi-Fi 時怎麼使用」。
+
+
+        """
     }
 
     return """
-    Code \(error.code): \(error.localizedDescription)
+    錯誤 \(error.code)：\(error.localizedDescription)
 
-    Troubleshooting:
-    1. Make sure Wi-Fi is connected or Cellular Data is disabled, and LocalDevVPN is enabled.
-    2. Restart your iPhone or iPad, then re-enable LocalDevVPN and try again.
-    3. \(pairingInstructions)
+    \(hint)排除方式：
+    1. 確認已連上 Wi-Fi（不需要有網路），或已進入飛航模式，並且 LocalDevVPN 已連線。
+    2. 重新啟動 iPhone，重新連線 LocalDevVPN 後再試。
+    3. 確認配對檔有效（不要重新按 idevice_pair 的 Create）。
 
-    Target attempted: \(RemotePairingPortResolver.lastAttemptDescription)
+    嘗試連線：\(RemotePairingPortResolver.lastAttemptDescription)
 
     \(connectionDiagnosticDetails())
     """

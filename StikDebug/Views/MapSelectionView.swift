@@ -1440,7 +1440,7 @@ struct LocationSimulationView: View {
         runLocationCommand(
             errorTitle: "瞬移失敗",
             errorMessage: { code in
-                "無法設定位置（錯誤 \(code)）。請確認 LocalDevVPN 已開啟、已連上 Wi-Fi，且配對檔有效。"
+                "無法設定位置（錯誤 \(code)）。請確認 LocalDevVPN 已開啟、已連上 Wi-Fi，且配對檔有效。" + cellularOnlyHint
             },
             operation: { locationUpdateCode(for: coord) }
         ) {
@@ -1463,7 +1463,7 @@ struct LocationSimulationView: View {
         runLocationCommand(
             errorTitle: "路線模擬失敗",
             errorMessage: { code in
-                "無法開始路線模擬（錯誤 \(code)）。請確認 LocalDevVPN 已開啟、已連上 Wi-Fi，且配對檔有效。"
+                "無法開始路線模擬（錯誤 \(code)）。請確認 LocalDevVPN 已開啟、已連上 Wi-Fi，且配對檔有效。" + cellularOnlyHint
             },
             operation: { locationUpdateCode(for: firstCoordinate) }
         ) {
@@ -1777,6 +1777,12 @@ struct LocationSimulationView: View {
 extension LocationSimulationView {
     private var travelMode: TravelMode {
         TravelMode(rawValue: travelModeRaw) ?? .walking
+    }
+
+    private var cellularOnlyHint: String {
+        NetworkStateMonitor.shared.isCellularOnly
+            ? "\n\n偵測到 Wi-Fi 關閉、行動數據開啟，這個狀態下無法建立連線。請先開飛航模式再試，詳細步驟見「設定 → 說明 → 沒有 Wi-Fi 時怎麼使用」。"
+            : ""
     }
 
     private var isMultiStopMode: Bool {
