@@ -61,6 +61,23 @@ enum WayfarerTab: String, CaseIterable, Identifiable {
     }
 }
 
+/// How a multi-stop route is travelled.
+enum RouteShape: String, CaseIterable, Identifiable {
+    case oneWay
+    case roundTrip
+    case circuit
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .oneWay: return "單程"
+        case .roundTrip: return "來回"
+        case .circuit: return "繞圈"
+        }
+    }
+}
+
 enum WayfarerSpeed {
     static func metersPerSecond(fromKmh kmh: Double) -> CLLocationSpeed {
         max(kmh, 0.5) / 3.6
@@ -97,12 +114,12 @@ enum WayfarerRouteBuilder {
     /// Builds one continuous path through all stops, using MapKit directions for each leg.
     static func build(
         stops: [CLLocationCoordinate2D],
-        loop: Bool,
+        shape: RouteShape,
         mode: TravelMode,
         followRoads: Bool
     ) async throws -> WayfarerBuiltRoute {
         var points = stops
-        if loop, let first = stops.first, stops.count > 1 {
+        if shape == .circuit, let first = stops.first, stops.count > 1 {
             points.append(first)
         }
         guard points.count >= 2 else {
@@ -118,7 +135,12 @@ enum WayfarerRouteBuilder {
             for (a, b) in zip(points, points.dropFirst()) {
                 total += straightDistance(a, b)
             }
-            return WayfarerBuiltRoute(coordinates: points, distance: total, straightLegCount: 0)
+            var path = points
+            if shape == .roundTrip {
+                path.append(contentsOf: points.reversed().dropFirst())
+                total *= 2
+            }
+            return WayfarerBuiltRoute(coordinates: path, distance: total, straightLegCount: 0)
         }
 
         var allCoordinates: [CLLocationCoordinate2D] = []
@@ -166,6 +188,11 @@ enum WayfarerRouteBuilder {
                 allCoordinates.append(contentsOf: legCoordinates.dropFirst())
             }
             totalDistance += legDistance
+        }
+
+        if shape == .roundTrip {
+            allCoordinates.append(contentsOf: allCoordinates.reversed().dropFirst())
+            totalDistance *= 2
         }
 
         return WayfarerBuiltRoute(

@@ -767,7 +767,14 @@ struct LocationSimulationView: View {
     @State private var showStopListInput = false
     @AppStorage("wayfarer.followRoads") private var followRoads = false
     @State private var multiStops: [RouteStop] = []
-    @State private var loopMultiStop = false
+    @AppStorage("wayfarer.pathShape") private var pathShapeRaw = RouteShape.oneWay.rawValue
+    @AppStorage("wayfarer.repeatRoute") private var repeatRoute = false
+    @State private var showSaveRoute = false
+    @State private var routeFavoriteName = ""
+    @State private var routeSourceStops: [CLLocationCoordinate2D] = []
+    @State private var routeSourceFollowRoads = false
+    @State private var routeSourceShape: RouteShape = .oneWay
+    @State private var suppressModeSpeedReset = false
     @State private var repeatPlayback = false
     @State private var isPlaybackPaused = false
     @State private var playbackCursor = 1
@@ -928,9 +935,11 @@ struct LocationSimulationView: View {
                         Marker("圖釘", coordinate: coordinate)
                             .tint(.red)
                     }
-                    ForEach(Array(multiStops.enumerated()), id: \.element.id) { index, stop in
-                        Marker("\(index + 1)", coordinate: stop.coordinate)
-                            .tint(.orange)
+                    if multiStops.count <= 100 {
+                        ForEach(Array(multiStops.enumerated()), id: \.element.id) { index, stop in
+                            Marker("\(index + 1)", coordinate: stop.coordinate)
+                                .tint(.orange)
+                        }
                     }
                 }
                 .mapStyle(.standard(elevation: .realistic))
@@ -1052,21 +1061,33 @@ struct LocationSimulationView: View {
         } message: {
             Text(alertMessage)
         }
-        .alert("儲存書籤", isPresented: $showSaveBookmark) {
-            TextField("名稱", text: $newBookmarkName)
-            Button("儲存") { addBookmark() }
-            Button("取消", role: .cancel) { newBookmarkName = "" }
+        .sheet(isPresented: $showSaveBookmark) {
+            if let pinCoordinate = coordinate {
+                SaveCoordinateSheet(coordinate: pinCoordinate)
+            }
+        }
+        .alert("收藏路線", isPresented: $showSaveRoute) {
+            TextField("路線名稱", text: $routeFavoriteName)
+            Button("儲存") { saveRouteFavorite() }
+            Button("取消", role: .cancel) { routeFavoriteName = "" }
         } message: {
-            Text("請為這個地點取名。")
+            Text("為這條路線取個名稱。")
         }
         .sheet(isPresented: $showBookmarks) {
-            BookmarksView(bookmarks: $bookmarks) { bookmark in
-                applySelection(bookmark.coordinate)
-                showBookmarks = false
-            } onDelete: { offsets in
-                bookmarks.remove(atOffsets: offsets)
-                saveBookmarks()
-            }
+            FavoritesSheet(
+                onPickCoordinate: { favorite in
+                    panelTab = .teleport
+                    applySelection(favorite.coordinate)
+                },
+                onTeleportCoordinate: { favorite in
+                    panelTab = .teleport
+                    applySelection(favorite.coordinate)
+                    DispatchQueue.main.async { simulate() }
+                },
+                onPickRoute: { route in
+                    applyRouteFavorite(route)
+                }
+            )
         }
         .sheet(isPresented: $showRouteSearch) {
             RouteSearchSheet(
@@ -1277,6 +1298,9 @@ struct LocationSimulationView: View {
         let distance = distanceAlong(displayCoordinates)
         let fallbackSpeed = WayfarerSpeed.metersPerSecond(fromKmh: speedKmh)
         repeatPlayback = false
+        routeSourceStops = coordinates
+        routeSourceFollowRoads = false
+        routeSourceShape = .oneWay
         routeStartSelection = RouteSearchSelection(title: "\(sourceName) 起點", coordinate: firstCoordinate)
         routeEndSelection = RouteSearchSelection(title: "\(sourceName) 終點", coordinate: lastCoordinate)
         setRoutePlan(RouteSimulationPlan(
@@ -1369,6 +1393,16 @@ struct LocationSimulationView: View {
             Text("切換模式只會調整速度，路線不變；播放中也可以直接改速度。")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+
+            Button {
+                routeFavoriteName = ""
+                showSaveRoute = true
+            } label: {
+                Label("收藏這條路線", systemImage: "star")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(routePlan == nil || routeSourceStops.count < 2)
 
             HStack(spacing: 12) {
                 Button("停止", action: clear)
@@ -1544,6 +1578,7 @@ struct LocationSimulationView: View {
         isLoadingRoute = false
         isPrefetchingRouteSpeeds = false
         multiStops = []
+        routeSourceStops = []
         repeatPlayback = false
         isPlaybackPaused = false
     }
@@ -1565,6 +1600,10 @@ struct LocationSimulationView: View {
         routeRequestID = requestID
         isLoadingRoute = true
         isPrefetchingRouteSpeeds = false
+
+        routeSourceStops = [routeStart, routeEnd]
+        routeSourceFollowRoads = true
+        routeSourceShape = .oneWay
 
         let request = MKDirections.Request()
         request.source = MKMapItem(placemark: MKPlacemark(coordinate: routeStart))
@@ -1788,8 +1827,12 @@ extension LocationSimulationView {
         }
     }
 
+    private var pathShape: RouteShape {
+        RouteShape(rawValue: pathShapeRaw) ?? .oneWay
+    }
+
     private var multiStopControls: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             Text(multiStops.isEmpty
                  ? "點選地圖加入站點，或貼上座標清單"
                  : "已加入 \(multiStops.count) 個站點，可繼續點地圖加入")
@@ -1802,11 +1845,31 @@ extension LocationSimulationView {
                 modeLocked: false
             )
 
-            Toggle("循環（回到起點並重複）", isOn: $loopMultiStop)
-                .font(.subheadline)
+            HStack(spacing: 8) {
+                Text("連線方式")
+                    .font(.subheadline)
+                Picker("連線方式", selection: $followRoads) {
+                    Text("直線").tag(false)
+                    Text("導航").tag(true)
+                }
+                .pickerStyle(.segmented)
+            }
 
-            Toggle("沿道路規劃（關閉則直線連接）", isOn: $followRoads)
-                .font(.subheadline)
+            HStack(spacing: 8) {
+                Text("走法")
+                    .font(.subheadline)
+                Picker("走法", selection: $pathShapeRaw) {
+                    ForEach(RouteShape.allCases) { shape in
+                        Text(shape.title).tag(shape.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+
+            if pathShape != .oneWay {
+                Toggle("重複播放（直到按停止）", isOn: $repeatRoute)
+                    .font(.subheadline)
+            }
 
             HStack(spacing: 8) {
                 Button("復原") {
@@ -1885,15 +1948,21 @@ extension LocationSimulationView {
         coordinate = nil
 
         let stopCoordinates = multiStops.map(\.coordinate)
-        let loop = loopMultiStop
+        let shape = pathShape
+        let shouldRepeat = repeatRoute && shape != .oneWay
         let mode = travelMode
         let roads = followRoads
         let speedMps = WayfarerSpeed.metersPerSecond(fromKmh: speedKmh)
 
+        routeSourceStops = stopCoordinates
+        routeSourceFollowRoads = roads
+        routeSourceShape = shape
+
         routeStartSelection = RouteSearchSelection(title: "站點 1", coordinate: stopCoordinates[0])
-        let lastStop = loop ? stopCoordinates[0] : stopCoordinates[stopCoordinates.count - 1]
+        let closed = shape != .oneWay
+        let lastStop = closed ? stopCoordinates[0] : stopCoordinates[stopCoordinates.count - 1]
         routeEndSelection = RouteSearchSelection(
-            title: loop ? "站點 1" : "站點 \(stopCoordinates.count)",
+            title: closed ? "站點 1" : "站點 \(stopCoordinates.count)",
             coordinate: lastStop
         )
 
@@ -1901,7 +1970,7 @@ extension LocationSimulationView {
             do {
                 let built = try await WayfarerRouteBuilder.build(
                     stops: stopCoordinates,
-                    loop: loop,
+                    shape: shape,
                     mode: mode,
                     followRoads: roads
                 )
@@ -1926,7 +1995,7 @@ extension LocationSimulationView {
                     guard routeRequestID == requestID else { return }
                     setRoutePlan(plan)
                     routePlaybackSamples = samples
-                    repeatPlayback = loop
+                    repeatPlayback = shouldRepeat
                     isLoadingRoute = false
                     if let routePolyline {
                         position = .rect(routePolyline.boundingMapRect)
@@ -1957,7 +2026,47 @@ extension LocationSimulationView {
     /// Switching mode only changes the speed (to that mode's default); the route
     /// and the current position are left alone.
     private func modeChanged() {
+        if suppressModeSpeedReset {
+            suppressModeSpeedReset = false
+            return
+        }
         speedKmh = travelMode.defaultSpeedKmh
+    }
+
+    private func saveRouteFavorite() {
+        guard routeSourceStops.count >= 2 else { return }
+        let trimmed = routeFavoriteName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let count = FavoritesStore.shared.data.routes.count + 1
+        let favorite = RouteFavorite(
+            name: trimmed.isEmpty ? "路線 \(count)" : trimmed,
+            stops: routeSourceStops.map { StopPoint(latitude: $0.latitude, longitude: $0.longitude) },
+            modeRaw: travelModeRaw,
+            speedKmh: speedKmh,
+            shapeRaw: routeSourceShape.rawValue,
+            followRoads: routeSourceFollowRoads
+        )
+        FavoritesStore.shared.addRoute(favorite)
+        routeFavoriteName = ""
+    }
+
+    /// Loads a favorite route into the multi-stop tab and builds it.
+    private func applyRouteFavorite(_ favorite: RouteFavorite) {
+        guard !isRouteRunning else { return }
+        resetRouteSelection()
+        coordinate = nil
+
+        if travelModeRaw != favorite.modeRaw {
+            suppressModeSpeedReset = true
+            travelModeRaw = favorite.modeRaw
+        }
+        speedKmh = favorite.speedKmh
+        followRoads = favorite.followRoads
+        pathShapeRaw = favorite.shapeRaw
+        panelTab = .multi
+        multiStops = favorite.stops.map {
+            RouteStop(coordinate: CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude))
+        }
+        DispatchQueue.main.async { buildMultiStopRoute() }
     }
 
     private func rebuildFullPlaybackSamples() {
