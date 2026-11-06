@@ -53,7 +53,7 @@ targets:
         INFOPLIST_KEY_UISupportsDocumentBrowser: "YES"
         MARKETING_VERSION: "0.1.0"
         PRODUCT_BUNDLE_IDENTIFIER: com.mimi860821.wayfarer
-        PRODUCT_NAME: "$(TARGET_NAME)"
+        PRODUCT_NAME: Wayfarer
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1,2"
         SUPPORTS_MACCATALYST: "NO"
