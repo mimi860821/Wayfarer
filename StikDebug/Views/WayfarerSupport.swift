@@ -86,14 +86,18 @@ enum WayfarerSpeed {
         max(kmh, 0.5) / 3.6
     }
 
-    /// Above this speed (150 km/h) location updates are sent about once a second
-    /// instead of twice, so very fast routes use fewer points (corners may be cut).
-    static let fastSpeedThreshold: CLLocationSpeed = 150 / 3.6
+    static let updateIntervalKey = "wayfarer.updateInterval"
+    static let defaultUpdateInterval: Double = 0.5
+
+    /// Seconds between location updates while a route plays (user adjustable).
+    static var updateInterval: Double {
+        let stored = UserDefaults.standard.double(forKey: updateIntervalKey)
+        return stored > 0 ? min(max(stored, 0.1), 5) : defaultUpdateInterval
+    }
 
     /// Spacing between route points: never denser than 10 m, wider at high speed.
     static func pathSpacing(forSpeed metersPerSecond: CLLocationSpeed) -> CLLocationDistance {
-        let interval: Double = metersPerSecond > fastSpeedThreshold ? 1.0 : 0.5
-        return max(10, metersPerSecond * interval)
+        max(10, metersPerSecond * updateInterval)
     }
 }
 
@@ -220,8 +224,10 @@ enum WayfarerRouteBuilder {
 struct TravelModeSpeedBar: View {
     @Binding var modeRaw: String
     @Binding var speedKmh: Double
+    @Binding var updateInterval: Double
     var modeLocked: Bool
     @FocusState private var speedFieldFocused: Bool
+    @FocusState private var intervalFieldFocused: Bool
 
     var body: some View {
         VStack(spacing: 8) {
@@ -249,10 +255,29 @@ struct TravelModeSpeedBar: View {
                 Stepper("", value: $speedKmh, in: 1...3000, step: 1)
                     .labelsHidden()
             }
+            HStack(spacing: 8) {
+                Text("更新間隔")
+                    .font(.subheadline)
+                TextField("秒", value: $updateInterval, format: .number.precision(.fractionLength(0...2)))
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 80)
+                    .focused($intervalFieldFocused)
+                Text("秒/次")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Stepper("", value: $updateInterval, in: 0.1...5, step: 0.1)
+                    .labelsHidden()
+            }
             .toolbar {
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
-                    Button("完成") { speedFieldFocused = false }
+                    Button("完成") {
+                        speedFieldFocused = false
+                        intervalFieldFocused = false
+                    }
                 }
             }
         }

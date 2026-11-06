@@ -351,7 +351,7 @@ private func buildPlaybackSamples(
         let speedLimit = nearestSpeedLimit(forSegmentFrom: start, to: end, using: speedWays) ?? fallbackSpeedMetersPerSecond
         let clampedSpeed = max(speedLimit, RouteSimulationDefaults.minimumSpeedMetersPerSecond)
         let segmentTravelTime = segmentDistance / clampedSpeed
-        let segmentStepCount = max(1, Int(ceil(segmentTravelTime / RouteSimulationDefaults.playbackTickInterval)))
+        let segmentStepCount = max(1, Int(ceil(segmentTravelTime / WayfarerSpeed.updateInterval)))
         let stepDelay = segmentTravelTime / Double(segmentStepCount)
 
         for index in 1...segmentStepCount {
@@ -793,6 +793,7 @@ struct LocationSimulationView: View {
     // Wayfarer additions
     @AppStorage("wayfarer.travelMode") private var travelModeRaw = TravelMode.walking.rawValue
     @AppStorage("wayfarer.speedKmh") private var speedKmh: Double = 5
+    @AppStorage("wayfarer.updateInterval") private var updateInterval: Double = 0.5
     @State private var panelTab: WayfarerTab = .teleport
     @State private var showCoordinateInput = false
     @State private var showStopListInput = false
@@ -1185,6 +1186,9 @@ struct LocationSimulationView: View {
         .onChange(of: speedKmh) { _, _ in
             applySpeedChange()
         }
+        .onChange(of: updateInterval) { _, _ in
+            intervalChanged()
+        }
         .onDisappear {
             routeLoadTask?.cancel()
             routeLoadTask = nil
@@ -1423,10 +1427,11 @@ struct LocationSimulationView: View {
             TravelModeSpeedBar(
                 modeRaw: $travelModeRaw,
                 speedKmh: $speedKmh,
+                updateInterval: $updateInterval,
                 modeLocked: false
             )
 
-            Text("切換模式只會調整速度，路線不變；播放中也可以直接改速度。")
+            Text("切換模式只會調整速度，路線不變；播放中也可以直接改速度與更新間隔。間隔越短越平順，但手機要處理的更新越多，太短時實際速度可能跟不上。")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
@@ -1845,6 +1850,7 @@ extension LocationSimulationView {
             TravelModeSpeedBar(
                 modeRaw: $travelModeRaw,
                 speedKmh: $speedKmh,
+                updateInterval: $updateInterval,
                 modeLocked: false
             )
 
@@ -1884,6 +1890,7 @@ extension LocationSimulationView {
             TravelModeSpeedBar(
                 modeRaw: $travelModeRaw,
                 speedKmh: $speedKmh,
+                updateInterval: $updateInterval,
                 modeLocked: false
             )
 
@@ -2110,6 +2117,15 @@ extension LocationSimulationView {
             RouteStop(coordinate: CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude))
         }
         DispatchQueue.main.async { buildMultiStopRoute() }
+    }
+
+    private func intervalChanged() {
+        let clamped = min(max(updateInterval, 0.1), 5)
+        if clamped != updateInterval {
+            updateInterval = clamped
+            return
+        }
+        applySpeedChange()
     }
 
     private func rebuildFullPlaybackSamples() {
