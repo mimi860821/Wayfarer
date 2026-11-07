@@ -70,8 +70,12 @@ struct MainTabView: View {
             .onAppear {
                 ensureSelectionIsValid()
                 if !didSetInitialHome {
-                    selection = AppFeature.home.id
+                    // Open the Tools tab, which pushes the location simulator.
+                    selection = AppFeature.tools.id
                     didSetInitialHome = true
+                    // The JIT tab used to start the background connection when it
+                    // appeared; start it here since it is no longer the first screen.
+                    startTunnelInBackground(showErrorUI: false)
                 }
             }
             .onOpenURL { url in
