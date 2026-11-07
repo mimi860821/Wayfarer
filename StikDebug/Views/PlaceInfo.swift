@@ -157,7 +157,7 @@ enum TimeZoneFormat {
             parts.append(name)
         }
         if let id = timeZoneID, let zone = timeZone(from: id) {
-            parts.append(shortOffsetLabel(zone))
+            parts.append(offsetLabel(zone))
             if let date {
                 parts.append(clockString(zone, at: date))
             }
@@ -257,7 +257,9 @@ struct LocationInfoCard: View {
 
     private static func format(_ pattern: String, _ date: Date, _ zone: TimeZone) -> String {
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_TW")
+        // Clock patterns use a fixed locale so the time is always 24-hour,
+        // whatever the phone's 12/24-hour setting is.
+        formatter.locale = Locale(identifier: pattern.contains("H") ? "en_US_POSIX" : "zh_TW")
         formatter.timeZone = zone
         formatter.dateFormat = pattern
         return formatter.string(from: date)
