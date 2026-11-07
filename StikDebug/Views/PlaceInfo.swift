@@ -38,12 +38,18 @@ enum PlaceCache {
         String(format: "%.2f,%.2f", coordinate.latitude, coordinate.longitude)
     }
 
+    /// Read from storage once, then kept in memory (main thread only).
+    private static var cachedEntries: [String: KnownPlace]?
+
     private static func load() -> [String: KnownPlace] {
-        guard let data = UserDefaults.standard.data(forKey: key),
-              let decoded = try? JSONDecoder().decode([String: KnownPlace].self, from: data) else {
-            return [:]
+        if let cachedEntries { return cachedEntries }
+        var loaded: [String: KnownPlace] = [:]
+        if let data = UserDefaults.standard.data(forKey: key),
+           let decoded = try? JSONDecoder().decode([String: KnownPlace].self, from: data) {
+            loaded = decoded
         }
-        return decoded
+        cachedEntries = loaded
+        return loaded
     }
 
     static func lookup(_ coordinate: CLLocationCoordinate2D) -> KnownPlace? {
@@ -59,6 +65,7 @@ enum PlaceCache {
             }
         }
         entries[cellKey(coordinate)] = KnownPlace(title: title, timeZoneID: timeZoneID)
+        cachedEntries = entries
         if let encoded = try? JSONEncoder().encode(entries) {
             UserDefaults.standard.set(encoded, forKey: key)
         }
