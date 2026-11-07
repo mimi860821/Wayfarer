@@ -26,6 +26,7 @@ struct PlaceInfo {
 struct KnownPlace: Codable {
     var title: String
     var timeZoneID: String?
+    var countryCode: String?
 }
 
 /// Remembers looked-up place names on the phone (about 1 km resolution), so the
@@ -56,7 +57,7 @@ enum PlaceCache {
         load()[cellKey(coordinate)]
     }
 
-    static func store(_ coordinate: CLLocationCoordinate2D, title: String?, timeZoneID: String?) {
+    static func store(_ coordinate: CLLocationCoordinate2D, title: String?, timeZoneID: String?, countryCode: String? = nil) {
         guard let title else { return }
         var entries = load()
         if entries.count >= maxEntries {
@@ -64,7 +65,7 @@ enum PlaceCache {
                 entries.removeValue(forKey: staleKey)
             }
         }
-        entries[cellKey(coordinate)] = KnownPlace(title: title, timeZoneID: timeZoneID)
+        entries[cellKey(coordinate)] = KnownPlace(title: title, timeZoneID: timeZoneID, countryCode: countryCode)
         cachedEntries = entries
         if let encoded = try? JSONEncoder().encode(entries) {
             UserDefaults.standard.set(encoded, forKey: key)
@@ -234,7 +235,7 @@ final class LocationInfoModel: ObservableObject {
             let info = await PlaceInfoResolver.resolve(coordinate)
             inFlight = false
             guard let info else { return }
-            PlaceCache.store(coordinate, title: info.title, timeZoneID: info.timeZoneID)
+            PlaceCache.store(coordinate, title: info.title, timeZoneID: info.timeZoneID, countryCode: info.countryCode)
             if let id = info.timeZoneID, let zone = TimeZoneFormat.timeZone(from: id) {
                 timeZone = zone
             }

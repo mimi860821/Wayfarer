@@ -810,6 +810,7 @@ struct LocationSimulationView: View {
     @AppStorage("wayfarer.hopMode") private var hopMode = false
     @AppStorage("wayfarer.dwellSeconds") private var dwellSeconds: Double = 3
     @State private var routeIsHop = false
+    @State private var showHistory = false
     @State private var mapCamera: MapCamera?
     @State private var mapHeading: Double = 0
     @StateObject private var locationInfo = LocationInfoModel()
@@ -1078,6 +1079,13 @@ struct LocationSimulationView: View {
                 }
 
                 Button {
+                    showHistory = true
+                } label: {
+                    Image(systemName: "clock.arrow.circlepath")
+                }
+                .accessibilityLabel("歷史記錄")
+
+                Button {
                     showCoordinateImporter = true
                 } label: {
                     Image(systemName: "square.and.arrow.down")
@@ -1127,6 +1135,18 @@ struct LocationSimulationView: View {
                     DispatchQueue.main.async { simulate() }
                 },
                 onPickRoute: { route in
+                    applyRouteFavorite(route)
+                }
+            )
+        }
+        .sheet(isPresented: $showHistory) {
+            HistorySheet(
+                onTeleport: { target in
+                    panelTab = .teleport
+                    applySelection(target)
+                    DispatchQueue.main.async { simulate() }
+                },
+                onRoute: { route in
                     applyRouteFavorite(route)
                 }
             )
@@ -1511,6 +1531,7 @@ struct LocationSimulationView: View {
             },
             operation: { locationUpdateCode(for: coord) }
         ) {
+            HistoryStore.shared.addTeleport(coord)
             routePlaybackCoordinate = nil
             beginBackgroundTask()
             LocationSimulationSession.shared.clearRoute()
@@ -1534,6 +1555,7 @@ struct LocationSimulationView: View {
             },
             operation: { locationUpdateCode(for: firstCoordinate) }
         ) {
+            recordRouteHistory()
             beginBackgroundTask()
             let routeID = LocationSimulationSession.shared.startRoute(
                 at: firstCoordinate,
@@ -2078,6 +2100,21 @@ extension LocationSimulationView {
         if let routePolyline {
             position = .rect(routePolyline.boundingMapRect)
         }
+    }
+
+    private func recordRouteHistory() {
+        guard routeSourceStops.count >= 2 else { return }
+        let favorite = RouteFavorite(
+            name: "",
+            stops: routeSourceStops.map { StopPoint(latitude: $0.latitude, longitude: $0.longitude) },
+            modeRaw: travelModeRaw,
+            speedKmh: speedKmh,
+            shapeRaw: routeSourceShape.rawValue,
+            followRoads: routeSourceFollowRoads,
+            hop: routeIsHop,
+            dwellSeconds: dwellSeconds
+        )
+        HistoryStore.shared.addRoute(favorite)
     }
 
     private func dwellChanged() {

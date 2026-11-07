@@ -113,7 +113,7 @@ final class FavoritesStore: ObservableObject {
                 data.coordinates[index].placeName = info.title ?? ""
                 save()
             }
-            PlaceCache.store(item.coordinate, title: info.title, timeZoneID: info.timeZoneID)
+            PlaceCache.store(item.coordinate, title: info.title, timeZoneID: info.timeZoneID, countryCode: info.countryCode)
             try? await Task.sleep(for: .milliseconds(1200))
         }
 
@@ -128,7 +128,7 @@ final class FavoritesStore: ObservableObject {
                 data.routes[index].placeName = info.title ?? ""
                 save()
             }
-            PlaceCache.store(start, title: info.title, timeZoneID: info.timeZoneID)
+            PlaceCache.store(start, title: info.title, timeZoneID: info.timeZoneID, countryCode: info.countryCode)
             try? await Task.sleep(for: .milliseconds(1200))
         }
     }
@@ -138,7 +138,7 @@ final class FavoritesStore: ObservableObject {
         for favorite in data.coordinates {
             guard let name = favorite.placeName, !name.isEmpty else { continue }
             if WayfarerRouteBuilder.straightDistance(favorite.coordinate, coordinate) < 500 {
-                return KnownPlace(title: name, timeZoneID: favorite.timeZoneID)
+                return KnownPlace(title: name, timeZoneID: favorite.timeZoneID, countryCode: favorite.countryCode)
             }
         }
         return nil
@@ -293,7 +293,7 @@ private enum FavoriteSort: String, CaseIterable, Identifiable {
 }
 
 /// Small usage hint shown under a list, styled differently from the list rows.
-private struct HintFooter: View {
+struct HintFooter: View {
     let text: String
 
     var body: some View {
