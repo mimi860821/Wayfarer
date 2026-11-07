@@ -1989,18 +1989,22 @@ extension LocationSimulationView {
         displayedRouteCoordinate ?? simulationSession.coordinate ?? coordinate
     }
 
+    /// Place/time card and compass; hidden while searching so they do not cover the results.
+    @ViewBuilder
     private var topOverlay: some View {
-        HStack(alignment: .top) {
-            if infoCoordinate != nil {
-                LocationInfoCard(model: locationInfo)
+        if searchText.isEmpty && searchCompleter.results.isEmpty {
+            HStack(alignment: .top) {
+                if infoCoordinate != nil {
+                    LocationInfoCard(model: locationInfo)
+                }
+                Spacer(minLength: 0)
+                WayfarerCompassButton(heading: mapHeading) {
+                    resetMapNorth()
+                }
             }
-            Spacer(minLength: 0)
-            WayfarerCompassButton(heading: mapHeading) {
-                resetMapNorth()
-            }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
         }
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
     }
 
     private func resetMapNorth() {
