@@ -14,6 +14,55 @@ struct PlaceInfo {
     var timeZoneID: String?
     var locality: String?
     var countryName: String?
+
+    /// "Tokyo，日本"; nil when the place has no name (open ocean).
+    var title: String? {
+        let parts = [locality, countryName].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: "，")
+    }
+}
+
+/// A place name and time zone that can be shown without a network lookup.
+struct KnownPlace: Codable {
+    var title: String
+    var timeZoneID: String?
+}
+
+/// Remembers looked-up place names on the phone (about 1 km resolution), so the
+/// map card still works offline for areas seen before.
+enum PlaceCache {
+    private static let key = "wayfarer.placeCache"
+    private static let maxEntries = 400
+
+    private static func cellKey(_ coordinate: CLLocationCoordinate2D) -> String {
+        String(format: "%.2f,%.2f", coordinate.latitude, coordinate.longitude)
+    }
+
+    private static func load() -> [String: KnownPlace] {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let decoded = try? JSONDecoder().decode([String: KnownPlace].self, from: data) else {
+            return [:]
+        }
+        return decoded
+    }
+
+    static func lookup(_ coordinate: CLLocationCoordinate2D) -> KnownPlace? {
+        load()[cellKey(coordinate)]
+    }
+
+    static func store(_ coordinate: CLLocationCoordinate2D, title: String?, timeZoneID: String?) {
+        guard let title else { return }
+        var entries = load()
+        if entries.count >= maxEntries {
+            for staleKey in entries.keys.prefix(maxEntries / 4) {
+                entries.removeValue(forKey: staleKey)
+            }
+        }
+        entries[cellKey(coordinate)] = KnownPlace(title: title, timeZoneID: timeZoneID)
+        if let encoded = try? JSONEncoder().encode(entries) {
+            UserDefaults.standard.set(encoded, forKey: key)
+        }
+    }
 }
 
 enum TimeZoneFormat {
@@ -53,6 +102,19 @@ enum TimeZoneFormat {
         return "UTC\(sign)\(hours):" + String(format: "%02d", minutes)
     }
 
+    /// "+9", "-3", "+5:30"
+    static func shortOffsetLabel(_ zone: TimeZone, at date: Date = Date()) -> String {
+        let seconds = zone.secondsFromGMT(for: date)
+        let sign = seconds < 0 ? "-" : "+"
+        let total = abs(seconds)
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        if minutes == 0 {
+            return "\(sign)\(hours)"
+        }
+        return "\(sign)\(hours):" + String(format: "%02d", minutes)
+    }
+
     static func offsetSeconds(id: String?) -> Int? {
         guard let id, let zone = timeZone(from: id) else { return nil }
         return zone.secondsFromGMT()
@@ -63,17 +125,14 @@ enum TimeZoneFormat {
         return Locale(identifier: "zh_TW").localizedString(forRegionCode: code)
     }
 
-    /// "日本 · UTC+9 · Asia/Tokyo", or a waiting message while it is unknown.
+    /// "日本 · +9", or a waiting message while it is unknown.
     static func describe(countryCode: String?, timeZoneID: String?) -> String {
         var parts: [String] = []
         if let name = countryName(code: countryCode) {
             parts.append(name)
         }
         if let id = timeZoneID, let zone = timeZone(from: id) {
-            parts.append(offsetLabel(zone))
-            if zone.identifier.contains("/") {
-                parts.append(zone.identifier)
-            }
+            parts.append(shortOffsetLabel(zone))
         }
         return parts.isEmpty ? "國家與時區：查詢中…" : parts.joined(separator: " · ")
     }
@@ -122,6 +181,13 @@ final class LocationInfoModel: ObservableObject {
             return
         }
 
+        // Names saved with favorites or remembered earlier need no network.
+        if let known = FavoritesStore.shared.knownPlace(near: coordinate) ?? PlaceCache.lookup(coordinate) {
+            show(known)
+            lastCoordinate = coordinate
+            return
+        }
+
         let moved = lastCoordinate.map { WayfarerRouteBuilder.straightDistance($0, coordinate) } ?? .infinity
         // Geocoder requests are rate limited: skip small moves and frequent repeats.
         if moved < 2000 && Date().timeIntervalSince(lastDate) < 30 { return }
@@ -140,13 +206,20 @@ final class LocationInfoModel: ObservableObject {
             let info = await PlaceInfoResolver.resolve(coordinate)
             inFlight = false
             guard let info else { return }
+            PlaceCache.store(coordinate, title: info.title, timeZoneID: info.timeZoneID)
             if let id = info.timeZoneID, let zone = TimeZoneFormat.timeZone(from: id) {
                 timeZone = zone
             }
-            let parts = [info.locality, info.countryName].compactMap { $0 }
-            title = parts.isEmpty
-                ? String(format: "%.2f, %.2f", coordinate.latitude, coordinate.longitude)
-                : parts.joined(separator: "，")
+            title = info.title ?? String(format: "%.2f, %.2f", coordinate.latitude, coordinate.longitude)
+        }
+    }
+
+    private func show(_ place: KnownPlace) {
+        if title != place.title {
+            title = place.title
+        }
+        if let id = place.timeZoneID, let zone = TimeZoneFormat.timeZone(from: id), zone != timeZone {
+            timeZone = zone
         }
     }
 }

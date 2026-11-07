@@ -23,6 +23,8 @@ struct CoordinateFavorite: Identifiable, Codable {
     var categoryID: UUID?
     var countryCode: String?
     var timeZoneID: String?
+    /// Place name saved with the favorite so it can be shown offline.
+    var placeName: String?
 
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
@@ -48,6 +50,7 @@ struct RouteFavorite: Identifiable, Codable {
     var dwellSeconds: Double?
     var countryCode: String?
     var timeZoneID: String?
+    var placeName: String?
 }
 
 struct FavoritesData: Codable {
@@ -101,18 +104,20 @@ final class FavoritesStore: ObservableObject {
         isFillingPlaceInfo = true
         defer { isFillingPlaceInfo = false }
 
-        for id in data.coordinates.filter({ $0.timeZoneID == nil }).map({ $0.id }) {
+        for id in data.coordinates.filter({ $0.timeZoneID == nil || $0.placeName == nil }).map({ $0.id }) {
             guard let item = data.coordinates.first(where: { $0.id == id }) else { continue }
             guard let info = await PlaceInfoResolver.resolve(item.coordinate) else { return }
             if let index = data.coordinates.firstIndex(where: { $0.id == id }) {
                 data.coordinates[index].countryCode = info.countryCode
                 data.coordinates[index].timeZoneID = info.timeZoneID
+                data.coordinates[index].placeName = info.title ?? ""
                 save()
             }
+            PlaceCache.store(item.coordinate, title: info.title, timeZoneID: info.timeZoneID)
             try? await Task.sleep(for: .milliseconds(1200))
         }
 
-        for id in data.routes.filter({ $0.timeZoneID == nil }).map({ $0.id }) {
+        for id in data.routes.filter({ $0.timeZoneID == nil || $0.placeName == nil }).map({ $0.id }) {
             guard let route = data.routes.first(where: { $0.id == id }),
                   let first = route.stops.first else { continue }
             let start = CLLocationCoordinate2D(latitude: first.latitude, longitude: first.longitude)
@@ -120,10 +125,23 @@ final class FavoritesStore: ObservableObject {
             if let index = data.routes.firstIndex(where: { $0.id == id }) {
                 data.routes[index].countryCode = info.countryCode
                 data.routes[index].timeZoneID = info.timeZoneID
+                data.routes[index].placeName = info.title ?? ""
                 save()
             }
+            PlaceCache.store(start, title: info.title, timeZoneID: info.timeZoneID)
             try? await Task.sleep(for: .milliseconds(1200))
         }
+    }
+
+    /// A saved favorite within 500 m whose name is stored (works offline).
+    func knownPlace(near coordinate: CLLocationCoordinate2D) -> KnownPlace? {
+        for favorite in data.coordinates {
+            guard let name = favorite.placeName, !name.isEmpty else { continue }
+            if WayfarerRouteBuilder.straightDistance(favorite.coordinate, coordinate) < 500 {
+                return KnownPlace(title: name, timeZoneID: favorite.timeZoneID)
+            }
+        }
+        return nil
     }
 
     func categoryName(for id: UUID?) -> String {
