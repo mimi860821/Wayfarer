@@ -469,14 +469,14 @@ struct FavoritesSheet: View {
                 }
                 .listStyle(.plain)
 
-                HintFooter(text: "點一下放置圖釘；向右滑瞬移，向左滑刪除；長按可重新命名或移動分類。")
+                HintFooter(text: "點一下直接瞬移；向右滑只放置圖釘，向左滑刪除；長按可重新命名或移動分類。")
             }
         }
     }
 
     private func coordinateRow(_ favorite: CoordinateFavorite) -> some View {
         Button {
-            onPickCoordinate(favorite)
+            onTeleportCoordinate(favorite)
             dismiss()
         } label: {
             VStack(alignment: .leading, spacing: 2) {
@@ -499,10 +499,10 @@ struct FavoritesSheet: View {
         }
         .swipeActions(edge: .leading) {
             Button {
-                onTeleportCoordinate(favorite)
+                onPickCoordinate(favorite)
                 dismiss()
             } label: {
-                Label("瞬移", systemImage: "location.fill")
+                Label("放置圖釘", systemImage: "mappin")
             }
             .tint(.blue)
         }
@@ -515,10 +515,10 @@ struct FavoritesSheet: View {
         }
         .contextMenu {
             Button {
-                onTeleportCoordinate(favorite)
+                onPickCoordinate(favorite)
                 dismiss()
             } label: {
-                Label("直接瞬移", systemImage: "location.fill")
+                Label("只放置圖釘（不瞬移）", systemImage: "mappin")
             }
 
             Button {
