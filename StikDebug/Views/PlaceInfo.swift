@@ -132,14 +132,35 @@ enum TimeZoneFormat {
         return Locale(identifier: "zh_TW").localizedString(forRegionCode: code)
     }
 
-    /// "日本 · +9", or a waiting message while it is unknown.
-    static func describe(countryCode: String?, timeZoneID: String?) -> String {
+    private static var clockFormatters: [String: DateFormatter] = [:]
+
+    /// Local time as "14:35" in the given zone (one formatter per zone, main thread only).
+    static func clockString(_ zone: TimeZone, at date: Date) -> String {
+        let formatter: DateFormatter
+        if let cached = clockFormatters[zone.identifier] {
+            formatter = cached
+        } else {
+            formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = zone
+            formatter.dateFormat = "HH:mm"
+            clockFormatters[zone.identifier] = formatter
+        }
+        return formatter.string(from: date)
+    }
+
+    /// "日本 · +9 · 14:35" (time only when `date` is given), or a waiting message
+    /// while the country and time zone are unknown.
+    static func describe(countryCode: String?, timeZoneID: String?, at date: Date? = nil) -> String {
         var parts: [String] = []
         if let name = countryName(code: countryCode) {
             parts.append(name)
         }
         if let id = timeZoneID, let zone = timeZone(from: id) {
             parts.append(shortOffsetLabel(zone))
+            if let date {
+                parts.append(clockString(zone, at: date))
+            }
         }
         return parts.isEmpty ? "國家與時區：查詢中…" : parts.joined(separator: " · ")
     }

@@ -482,9 +482,15 @@ struct FavoritesSheet: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(favorite.name)
                     .foregroundStyle(.primary)
-                Text(TimeZoneFormat.describe(countryCode: favorite.countryCode, timeZoneID: favorite.timeZoneID))
+                TimelineView(.everyMinute) { context in
+                    Text(TimeZoneFormat.describe(
+                        countryCode: favorite.countryCode,
+                        timeZoneID: favorite.timeZoneID,
+                        at: context.date
+                    ))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                }
                 Text("\(store.categoryName(for: favorite.categoryID)) · "
                      + String(format: "%.5f, %.5f", favorite.latitude, favorite.longitude))
                     .font(.caption2)
@@ -575,9 +581,15 @@ struct FavoritesSheet: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(route.name)
                                     .foregroundStyle(.primary)
-                                Text("起點：" + TimeZoneFormat.describe(countryCode: route.countryCode, timeZoneID: route.timeZoneID))
+                                TimelineView(.everyMinute) { context in
+                                    Text("起點：" + TimeZoneFormat.describe(
+                                        countryCode: route.countryCode,
+                                        timeZoneID: route.timeZoneID,
+                                        at: context.date
+                                    ))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
+                                }
                                 Text(routeSubtitle(route))
                                     .font(.caption2)
                                     .foregroundStyle(.tertiary)
