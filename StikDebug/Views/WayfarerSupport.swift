@@ -283,3 +283,34 @@ struct TravelModeSpeedBar: View {
         }
     }
 }
+
+/// Seconds to stay at each stop in point-to-point (hop) mode.
+struct DwellField: View {
+    @Binding var seconds: Double
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("到點停留")
+                .font(.subheadline)
+            TextField("秒", value: $seconds, format: .number.precision(.fractionLength(0...1)))
+                .keyboardType(.decimalPad)
+                .multilineTextAlignment(.trailing)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 80)
+                .focused($focused)
+            Text("秒")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Stepper("", value: $seconds, in: 0...3600, step: 1)
+                .labelsHidden()
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("完成") { focused = false }
+            }
+        }
+    }
+}

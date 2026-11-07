@@ -21,6 +21,8 @@ struct CoordinateFavorite: Identifiable, Codable {
     var latitude: Double
     var longitude: Double
     var categoryID: UUID?
+    var countryCode: String?
+    var timeZoneID: String?
 
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
@@ -41,6 +43,11 @@ struct RouteFavorite: Identifiable, Codable {
     var shapeRaw: String
     var followRoads: Bool
     var createdAt = Date()
+    /// Point-to-point mode: jump to each stop and wait `dwellSeconds`.
+    var hop: Bool?
+    var dwellSeconds: Double?
+    var countryCode: String?
+    var timeZoneID: String?
 }
 
 struct FavoritesData: Codable {
@@ -81,6 +88,41 @@ final class FavoritesStore: ObservableObject {
     private func save() {
         if let encoded = try? JSONEncoder().encode(data) {
             try? encoded.write(to: fileURL, options: .atomic)
+        }
+    }
+
+    private var isFillingPlaceInfo = false
+
+    /// Looks up country and time zone for favorites that do not have them yet
+    /// (a route uses its first stop). One request at a time to respect rate limits.
+    @MainActor
+    func fillMissingPlaceInfo() async {
+        guard !isFillingPlaceInfo else { return }
+        isFillingPlaceInfo = true
+        defer { isFillingPlaceInfo = false }
+
+        for id in data.coordinates.filter({ $0.timeZoneID == nil }).map({ $0.id }) {
+            guard let item = data.coordinates.first(where: { $0.id == id }) else { continue }
+            guard let info = await PlaceInfoResolver.resolve(item.coordinate) else { return }
+            if let index = data.coordinates.firstIndex(where: { $0.id == id }) {
+                data.coordinates[index].countryCode = info.countryCode
+                data.coordinates[index].timeZoneID = info.timeZoneID
+                save()
+            }
+            try? await Task.sleep(for: .milliseconds(1200))
+        }
+
+        for id in data.routes.filter({ $0.timeZoneID == nil }).map({ $0.id }) {
+            guard let route = data.routes.first(where: { $0.id == id }),
+                  let first = route.stops.first else { continue }
+            let start = CLLocationCoordinate2D(latitude: first.latitude, longitude: first.longitude)
+            guard let info = await PlaceInfoResolver.resolve(start) else { return }
+            if let index = data.routes.firstIndex(where: { $0.id == id }) {
+                data.routes[index].countryCode = info.countryCode
+                data.routes[index].timeZoneID = info.timeZoneID
+                save()
+            }
+            try? await Task.sleep(for: .milliseconds(1200))
         }
     }
 
@@ -182,6 +224,79 @@ final class FavoritesStore: ObservableObject {
 
 // MARK: - Favorites list
 
+private enum FavoriteSort: String, CaseIterable, Identifiable {
+    case addedNewest
+    case addedOldest
+    case nameAscending
+    case nameDescending
+    case zoneEastToWest
+    case zoneWestToEast
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .addedNewest: return "加入時間（新→舊）"
+        case .addedOldest: return "加入時間（舊→新）"
+        case .nameAscending: return "名稱（A→Z）"
+        case .nameDescending: return "名稱（Z→A）"
+        case .zoneEastToWest: return "時區（東→西）"
+        case .zoneWestToEast: return "時區（西→東）"
+        }
+    }
+
+    /// Sorts items given in the order they were added.
+    func sorted<T>(_ items: [T], name: (T) -> String, zoneID: (T) -> String?) -> [T] {
+        switch self {
+        case .addedOldest:
+            return items
+        case .addedNewest:
+            return Array(items.reversed())
+        case .nameAscending:
+            return items.sorted { name($0).localizedStandardCompare(name($1)) == .orderedAscending }
+        case .nameDescending:
+            return items.sorted { name($0).localizedStandardCompare(name($1)) == .orderedDescending }
+        case .zoneEastToWest:
+            return items.sorted { lhs, rhs in
+                let a = TimeZoneFormat.offsetSeconds(id: zoneID(lhs)) ?? Int.min
+                let b = TimeZoneFormat.offsetSeconds(id: zoneID(rhs)) ?? Int.min
+                if a != b { return a > b }
+                return name(lhs).localizedStandardCompare(name(rhs)) == .orderedAscending
+            }
+        case .zoneWestToEast:
+            return items.sorted { lhs, rhs in
+                let a = TimeZoneFormat.offsetSeconds(id: zoneID(lhs)) ?? Int.max
+                let b = TimeZoneFormat.offsetSeconds(id: zoneID(rhs)) ?? Int.max
+                if a != b { return a < b }
+                return name(lhs).localizedStandardCompare(name(rhs)) == .orderedAscending
+            }
+        }
+    }
+}
+
+/// Small usage hint shown under a list, styled differently from the list rows.
+private struct HintFooter: View {
+    let text: String
+
+    var body: some View {
+        Label {
+            Text(text)
+                .font(.caption2)
+        } icon: {
+            Image(systemName: "lightbulb")
+                .font(.caption2)
+        }
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .padding(.horizontal)
+        .padding(.top, 4)
+        .padding(.bottom, 8)
+    }
+}
+
 private enum FavoriteFilter: Hashable {
     case all
     case uncategorized
@@ -192,6 +307,7 @@ struct FavoritesSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var store = FavoritesStore.shared
 
+    @AppStorage("wayfarer.favSort") private var sortRaw = FavoriteSort.addedNewest.rawValue
     @State private var section = 0
     @State private var filter: FavoriteFilter = .all
     @State private var showCategoryManager = false
@@ -213,6 +329,18 @@ struct FavoritesSheet: View {
         case .category(let id):
             return store.data.coordinates.filter { $0.categoryID == id }
         }
+    }
+
+    private var sort: FavoriteSort {
+        FavoriteSort(rawValue: sortRaw) ?? .addedNewest
+    }
+
+    private var sortedCoordinates: [CoordinateFavorite] {
+        sort.sorted(filteredCoordinates, name: { $0.name }, zoneID: { $0.timeZoneID })
+    }
+
+    private var sortedRoutes: [RouteFavorite] {
+        sort.sorted(store.data.routes, name: { $0.name }, zoneID: { $0.timeZoneID })
     }
 
     var body: some View {
@@ -237,10 +365,23 @@ struct FavoritesSheet: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("關閉") { dismiss() }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("管理分類") { showCategoryManager = true }
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Menu {
+                        Picker("排序", selection: $sortRaw) {
+                            ForEach(FavoriteSort.allCases) { option in
+                                Text(option.title).tag(option.rawValue)
+                            }
+                        }
+                    } label: {
+                        Label("排序", systemImage: "arrow.up.arrow.down")
+                    }
+
+                    Button("分類") { showCategoryManager = true }
                         .disabled(section != 0)
                 }
+            }
+            .task {
+                await store.fillMissingPlaceInfo()
             }
             .sheet(isPresented: $showCategoryManager) {
                 CategoryManagerSheet()
@@ -304,16 +445,13 @@ struct FavoritesSheet: View {
                 )
             } else {
                 List {
-                    ForEach(filteredCoordinates) { favorite in
+                    ForEach(sortedCoordinates) { favorite in
                         coordinateRow(favorite)
-                    }
-                    Section {
-                        EmptyView()
-                    } footer: {
-                        Text("點一下放置圖釘；向右滑可直接瞬移，向左滑刪除；長按可重新命名或移動分類。")
                     }
                 }
                 .listStyle(.plain)
+
+                HintFooter(text: "點一下放置圖釘；向右滑瞬移，向左滑刪除；長按可重新命名或移動分類。")
             }
         }
     }
@@ -326,10 +464,13 @@ struct FavoritesSheet: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(favorite.name)
                     .foregroundStyle(.primary)
-                Text("\(store.categoryName(for: favorite.categoryID)) · "
-                     + String(format: "%.5f, %.5f", favorite.latitude, favorite.longitude))
+                Text(TimeZoneFormat.describe(countryCode: favorite.countryCode, timeZoneID: favorite.timeZoneID))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Text("\(store.categoryName(for: favorite.categoryID)) · "
+                     + String(format: "%.5f, %.5f", favorite.latitude, favorite.longitude))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
         }
         .swipeActions(edge: .leading) {
@@ -389,14 +530,17 @@ struct FavoritesSheet: View {
     // MARK: Routes
 
     private func routeSubtitle(_ route: RouteFavorite) -> String {
-        let mode = TravelMode(rawValue: route.modeRaw)?.title ?? "走路"
         let shape = RouteShape(rawValue: route.shapeRaw)?.title ?? "單程"
+        if route.hop == true {
+            return "\(route.stops.count) 個點 · 點對點飛 · 停留 \(String(format: "%g", route.dwellSeconds ?? 0)) 秒 · \(shape)"
+        }
+        let mode = TravelMode(rawValue: route.modeRaw)?.title ?? "走路"
         let roads = route.followRoads ? "導航" : "直線"
         return "\(route.stops.count) 個點 · \(mode) \(String(format: "%g", route.speedKmh)) 公里/小時 · \(roads) · \(shape)"
     }
 
     private var routesContent: some View {
-        Group {
+        VStack(spacing: 0) {
             if store.data.routes.isEmpty {
                 ContentUnavailableView(
                     "沒有收藏的路線",
@@ -405,7 +549,7 @@ struct FavoritesSheet: View {
                 )
             } else {
                 List {
-                    ForEach(store.data.routes) { route in
+                    ForEach(sortedRoutes) { route in
                         Button {
                             onPickRoute(route)
                             dismiss()
@@ -413,9 +557,12 @@ struct FavoritesSheet: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(route.name)
                                     .foregroundStyle(.primary)
-                                Text(routeSubtitle(route))
+                                Text("起點：" + TimeZoneFormat.describe(countryCode: route.countryCode, timeZoneID: route.timeZoneID))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
+                                Text(routeSubtitle(route))
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
                             }
                         }
                         .swipeActions(edge: .trailing) {
@@ -441,13 +588,10 @@ struct FavoritesSheet: View {
                             }
                         }
                     }
-                    Section {
-                        EmptyView()
-                    } footer: {
-                        Text("點一下載入並建立路線；向左滑刪除；長按可重新命名。")
-                    }
                 }
                 .listStyle(.plain)
+
+                HintFooter(text: "點一下載入並建立路線；向左滑刪除；長按可重新命名。")
             }
         }
     }
@@ -465,6 +609,7 @@ private struct CategoryManagerSheet: View {
 
     var body: some View {
         NavigationStack {
+            VStack(spacing: 0) {
             List {
                 if store.data.categories.isEmpty {
                     Text("還沒有分類，按右上角「新增」建立。")
@@ -492,11 +637,9 @@ private struct CategoryManagerSheet: View {
                         }
                     }
                 }
-                Section {
-                    EmptyView()
-                } footer: {
-                    Text("點分類可重新命名；向左滑刪除（裡面的座標會變成「未分類」，不會被刪掉）。")
-                }
+            }
+
+            HintFooter(text: "點分類可重新命名；向左滑刪除（裡面的座標會變成「未分類」，不會被刪掉）。")
             }
             .navigationTitle("管理分類")
             .navigationBarTitleDisplayMode(.inline)
@@ -585,6 +728,7 @@ struct SaveCoordinateSheet: View {
             finalCategory = created
         }
         store.addCoordinate(name: name, coordinate: coordinate, categoryID: finalCategory)
+        Task { await FavoritesStore.shared.fillMissingPlaceInfo() }
         dismiss()
     }
 }

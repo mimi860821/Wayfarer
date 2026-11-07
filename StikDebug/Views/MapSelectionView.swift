@@ -807,6 +807,12 @@ struct LocationSimulationView: View {
     @State private var routeSourceFollowRoads = false
     @State private var routeSourceShape: RouteShape = .oneWay
     @State private var suppressModeSpeedReset = false
+    @AppStorage("wayfarer.hopMode") private var hopMode = false
+    @AppStorage("wayfarer.dwellSeconds") private var dwellSeconds: Double = 3
+    @State private var routeIsHop = false
+    @State private var mapCamera: MapCamera?
+    @State private var mapHeading: Double = 0
+    @StateObject private var locationInfo = LocationInfoModel()
     @State private var repeatPlayback = false
     @State private var isPlaybackPaused = false
     @State private var playbackCursor = 1
@@ -984,8 +990,9 @@ struct LocationSimulationView: View {
                         }
                     }
                 }
-                .mapControls {
-                    MapCompass()
+                .onMapCameraChange(frequency: .continuous) { context in
+                    mapHeading = context.camera.heading
+                    mapCamera = context.camera
                 }
             }
                 .ignoresSafeArea()
@@ -1041,6 +1048,9 @@ struct LocationSimulationView: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 12)
             }
+        }
+        .overlay(alignment: .top) {
+            topOverlay
         }
         .safeAreaInset(edge: .top) {
             if !isDeviceConnected || showConnectedStatus {
@@ -1142,6 +1152,7 @@ struct LocationSimulationView: View {
             if TravelMode(rawValue: travelModeRaw) == nil {
                 travelModeRaw = TravelMode.walking.rawValue
             }
+            locationInfo.update(infoCoordinate)
             loadBookmarks()
             if let routeCoordinates = simulationSession.routeCoordinates {
                 coordinate = nil
@@ -1188,6 +1199,12 @@ struct LocationSimulationView: View {
         }
         .onChange(of: updateInterval) { _, _ in
             intervalChanged()
+        }
+        .onChange(of: dwellSeconds) { _, _ in
+            dwellChanged()
+        }
+        .onChange(of: infoCoordinate.map(CoordinateSnapshot.init)) { _, newValue in
+            locationInfo.update(newValue?.coordinate)
         }
         .onDisappear {
             routeLoadTask?.cancel()
@@ -1341,6 +1358,7 @@ struct LocationSimulationView: View {
         routeSourceStops = coordinates
         routeSourceFollowRoads = false
         routeSourceShape = .oneWay
+        routeIsHop = false
         routeStartSelection = RouteSearchSelection(title: "\(sourceName) 起點", coordinate: firstCoordinate)
         routeEndSelection = RouteSearchSelection(title: "\(sourceName) 終點", coordinate: lastCoordinate)
         setRoutePlan(RouteSimulationPlan(
@@ -1424,16 +1442,24 @@ struct LocationSimulationView: View {
                     .foregroundStyle(.secondary)
             }
 
-            TravelModeSpeedBar(
-                modeRaw: $travelModeRaw,
-                speedKmh: $speedKmh,
-                updateInterval: $updateInterval,
-                modeLocked: false
-            )
+            if routeIsHop {
+                DwellField(seconds: $dwellSeconds)
 
-            Text("切換模式只會調整速度，路線不變；播放中也可以直接改速度與更新間隔。間隔越短越平順，但手機要處理的更新越多，太短時實際速度可能跟不上。")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+                Text("點對點飛：依序瞬移到每個站點，每個站點停留設定的秒數；播放中也可以直接改停留秒數。")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                TravelModeSpeedBar(
+                    modeRaw: $travelModeRaw,
+                    speedKmh: $speedKmh,
+                    updateInterval: $updateInterval,
+                    modeLocked: false
+                )
+
+                Text("切換模式只會調整速度，路線不變；播放中也可以直接改速度與更新間隔。間隔越短越平順，但手機要處理的更新越多，太短時實際速度可能跟不上。")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
 
             Button {
                 routeFavoriteName = ""
@@ -1620,6 +1646,7 @@ struct LocationSimulationView: View {
         isPrefetchingRouteSpeeds = false
         multiStops = []
         routeSourceStops = []
+        routeIsHop = false
         repeatPlayback = false
         isPlaybackPaused = false
     }
@@ -1645,6 +1672,7 @@ struct LocationSimulationView: View {
         routeSourceStops = [routeStart, routeEnd]
         routeSourceFollowRoads = true
         routeSourceShape = .oneWay
+        routeIsHop = false
 
         let request = MKDirections.Request()
         request.source = MKMapItem(placemark: MKPlacemark(coordinate: routeStart))
@@ -1751,7 +1779,8 @@ struct LocationSimulationView: View {
 
                 let generation = playbackGeneration
                 let sample = samples[cursor]
-                try? await Task.sleep(for: .seconds(sample.delayFromPrevious))
+                let waitSeconds = routeIsHop ? max(dwellSeconds, 0) : sample.delayFromPrevious
+                try? await Task.sleep(for: .seconds(waitSeconds))
                 guard !Task.isCancelled,
                       LocationSimulationSession.shared.isCurrentRoute(routeID) else {
                     return
@@ -1887,21 +1916,28 @@ extension LocationSimulationView {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
-            TravelModeSpeedBar(
-                modeRaw: $travelModeRaw,
-                speedKmh: $speedKmh,
-                updateInterval: $updateInterval,
-                modeLocked: false
-            )
+            Toggle("點對點飛（逐點瞬移）", isOn: $hopMode)
+                .font(.subheadline)
 
-            HStack(spacing: 8) {
-                Text("連線方式")
-                    .font(.subheadline)
-                Picker("連線方式", selection: $followRoads) {
-                    Text("直線").tag(false)
-                    Text("導航").tag(true)
+            if hopMode {
+                DwellField(seconds: $dwellSeconds)
+            } else {
+                TravelModeSpeedBar(
+                    modeRaw: $travelModeRaw,
+                    speedKmh: $speedKmh,
+                    updateInterval: $updateInterval,
+                    modeLocked: false
+                )
+
+                HStack(spacing: 8) {
+                    Text("連線方式")
+                        .font(.subheadline)
+                    Picker("連線方式", selection: $followRoads) {
+                        Text("直線").tag(false)
+                        Text("導航").tag(true)
+                    }
+                    .pickerStyle(.segmented)
                 }
-                .pickerStyle(.segmented)
             }
 
             HStack(spacing: 8) {
@@ -1949,6 +1985,111 @@ extension LocationSimulationView {
         }
     }
 
+    private var infoCoordinate: CLLocationCoordinate2D? {
+        displayedRouteCoordinate ?? simulationSession.coordinate ?? coordinate
+    }
+
+    private var topOverlay: some View {
+        HStack(alignment: .top) {
+            if infoCoordinate != nil {
+                LocationInfoCard(model: locationInfo)
+            }
+            Spacer(minLength: 0)
+            WayfarerCompassButton(heading: mapHeading) {
+                resetMapNorth()
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+    }
+
+    private func resetMapNorth() {
+        guard let camera = mapCamera else { return }
+        withAnimation(.easeInOut(duration: 0.35)) {
+            position = .camera(
+                MapCamera(
+                    centerCoordinate: camera.centerCoordinate,
+                    distance: camera.distance,
+                    heading: 0,
+                    pitch: 0
+                )
+            )
+        }
+    }
+
+    /// One sample per stop; the wait before each jump is the dwell time, read live.
+    private func hopSamples(for path: [CLLocationCoordinate2D]) -> [RoutePlaybackSample] {
+        let dwell = max(dwellSeconds, 0)
+        return path.enumerated().map { index, point in
+            RoutePlaybackSample(coordinate: point, delayFromPrevious: index == 0 ? 0 : dwell)
+        }
+    }
+
+    private func buildHopRoute() {
+        guard multiStops.count >= 2 else { return }
+        routeLoadTask?.cancel()
+        routeSpeedPrefetchTask?.cancel()
+
+        let stops = multiStops.map(\.coordinate)
+        let shape = pathShape
+        var path = stops
+        switch shape {
+        case .oneWay:
+            break
+        case .roundTrip:
+            path.append(contentsOf: stops.reversed().dropFirst())
+        case .circuit:
+            path.append(stops[0])
+        }
+
+        var distance: CLLocationDistance = 0
+        for (a, b) in zip(path, path.dropFirst()) {
+            distance += WayfarerRouteBuilder.straightDistance(a, b)
+        }
+        let dwell = max(dwellSeconds, 0)
+
+        routeRequestID = UUID()
+        routeSourceStops = stops
+        routeSourceFollowRoads = false
+        routeSourceShape = shape
+        routeIsHop = true
+
+        routeStartSelection = RouteSearchSelection(title: "站點 1", coordinate: stops[0])
+        let closed = shape != .oneWay
+        routeEndSelection = RouteSearchSelection(
+            title: closed ? "站點 1" : "站點 \(stops.count)",
+            coordinate: closed ? stops[0] : stops[stops.count - 1]
+        )
+        coordinate = nil
+
+        setRoutePlan(RouteSimulationPlan(
+            displayCoordinates: path,
+            distance: distance,
+            expectedTravelTime: dwell * Double(max(path.count - 1, 0))
+        ))
+        routePlaybackSamples = hopSamples(for: path)
+        repeatPlayback = repeatRoute && shape != .oneWay
+        isLoadingRoute = false
+        isPrefetchingRouteSpeeds = false
+        if let routePolyline {
+            position = .rect(routePolyline.boundingMapRect)
+        }
+    }
+
+    private func dwellChanged() {
+        let clamped = min(max(dwellSeconds, 0), 3600)
+        if clamped != dwellSeconds {
+            dwellSeconds = clamped
+            return
+        }
+        guard routeIsHop, !isRouteRunning, let plan = routePlan else { return }
+        setRoutePlan(RouteSimulationPlan(
+            displayCoordinates: plan.displayCoordinates,
+            distance: plan.distance,
+            expectedTravelTime: clamped * Double(max(plan.displayCoordinates.count - 1, 0))
+        ))
+    }
+
     private func panelTabChanged() {
         if panelTab == .multi {
             coordinate = nil
@@ -1978,6 +2119,10 @@ extension LocationSimulationView {
 
     private func buildMultiStopRoute() {
         guard multiStops.count >= 2 else { return }
+        if hopMode {
+            buildHopRoute()
+            return
+        }
         if followRoads && multiStops.count > 25 {
             alertTitle = "站點太多"
             alertMessage = "沿道路規劃最多支援 25 個站點。請關閉「沿道路規劃」改用直線連接，或減少站點。"
@@ -2006,6 +2151,7 @@ extension LocationSimulationView {
         routeSourceStops = stopCoordinates
         routeSourceFollowRoads = roads
         routeSourceShape = shape
+        routeIsHop = false
 
         routeStartSelection = RouteSearchSelection(title: "站點 1", coordinate: stopCoordinates[0])
         let closed = shape != .oneWay
@@ -2092,9 +2238,12 @@ extension LocationSimulationView {
             modeRaw: travelModeRaw,
             speedKmh: speedKmh,
             shapeRaw: routeSourceShape.rawValue,
-            followRoads: routeSourceFollowRoads
+            followRoads: routeSourceFollowRoads,
+            hop: routeIsHop,
+            dwellSeconds: dwellSeconds
         )
         FavoritesStore.shared.addRoute(favorite)
+        Task { await FavoritesStore.shared.fillMissingPlaceInfo() }
         routeFavoriteName = ""
     }
 
@@ -2111,6 +2260,8 @@ extension LocationSimulationView {
         }
         speedKmh = favorite.speedKmh
         followRoads = favorite.followRoads
+        hopMode = favorite.hop ?? false
+        dwellSeconds = favorite.dwellSeconds ?? 3
         pathShapeRaw = favorite.shapeRaw
         panelTab = .multi
         multiStops = favorite.stops.map {
@@ -2130,6 +2281,10 @@ extension LocationSimulationView {
 
     private func rebuildFullPlaybackSamples() {
         guard let plan = routePlan else { return }
+        if routeIsHop {
+            routePlaybackSamples = hopSamples(for: plan.displayCoordinates)
+            return
+        }
         routePlaybackSamples = buildPlaybackSamples(
             from: plan.displayCoordinates,
             speedWays: [],
@@ -2145,6 +2300,7 @@ extension LocationSimulationView {
             speedKmh = clamped
             return
         }
+        guard !routeIsHop else { return }
         guard let plan = routePlan else { return }
         let speedMps = WayfarerSpeed.metersPerSecond(fromKmh: speedKmh)
         let base = plan.displayCoordinates
