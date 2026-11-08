@@ -1317,11 +1317,12 @@ struct LocationSimulationView: View {
     private func selectSearchResult(_ result: MKLocalSearchCompletion) {
         searchText = ""
         searchCompleter.results = []
+        dismissKeyboard()
 
         let request = MKLocalSearch.Request(completion: result)
         MKLocalSearch(request: request).start { response, _ in
             if let item = response?.mapItems.first {
-                applySelection(item.placemark.coordinate)
+                useSearchedPlace(item.placemark.coordinate)
             }
         }
     }
@@ -1332,7 +1333,15 @@ struct LocationSimulationView: View {
 
         searchText = ""
         searchCompleter.results = []
-        applyImportedCoordinates(importedCoordinates, sourceName: "已匯入")
+        dismissKeyboard()
+
+        // A single pasted coordinate is used right away; several make a route.
+        if importedCoordinates.count == 1, let only = importedCoordinates.first,
+           CLLocationCoordinate2DIsValid(only) {
+            useSearchedPlace(only)
+        } else {
+            applyImportedCoordinates(importedCoordinates, sourceName: "已匯入")
+        }
     }
 
     private func importCoordinates(_ result: Result<[URL], Error>) {
@@ -2575,6 +2584,38 @@ extension LocationSimulationView {
             coordinate = nil
         } else {
             multiStops = []
+        }
+    }
+
+    private func dismissKeyboard() {
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil,
+            from: nil,
+            for: nil
+        )
+    }
+
+    /// A place picked from the search results, or a coordinate typed in the search bar.
+    /// On the Teleport tab it teleports there at once; on the other tabs it is still
+    /// used as the destination (Navigate) or added as a stop (Multi-stop).
+    private func useSearchedPlace(_ target: CLLocationCoordinate2D) {
+        dismissKeyboard()
+        switch panelTab {
+        case .teleport:
+            applySelection(target)
+            DispatchQueue.main.async { simulate() }
+        case .navigate:
+            applySelection(target)
+        case .multi:
+            addStop(target)
+            position = .region(
+                MKCoordinateRegion(
+                    center: target,
+                    latitudinalMeters: 1000,
+                    longitudinalMeters: 1000
+                )
+            )
         }
     }
 
