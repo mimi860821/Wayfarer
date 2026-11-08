@@ -1814,11 +1814,15 @@ struct LocationSimulationView: View {
         playbackGeneration += 1
         routePlaybackTask = Task {
             var lastSuccessfulCoordinate = routePlaybackSamples.first?.coordinate
+            // Point-to-point: after a pause, Resume jumps on to the next stop at once.
+            var skipNextWait = false
 
             while !Task.isCancelled {
                 // Paused: keep re-sending the current position so it does not expire.
                 var pausedTicks = 0
+                var pausedHere = false
                 while isPlaybackPaused {
+                    pausedHere = true
                     guard !Task.isCancelled,
                           LocationSimulationSession.shared.isCurrentRoute(routeID) else {
                         return
@@ -1828,6 +1832,9 @@ struct LocationSimulationView: View {
                     if pausedTicks % 4 == 0, let keepCoordinate = lastSuccessfulCoordinate {
                         _ = await sendLocationUpdate(for: keepCoordinate)
                     }
+                }
+                if pausedHere && routeIsHop {
+                    skipNextWait = true
                 }
                 guard LocationSimulationSession.shared.isCurrentRoute(routeID) else { return }
 
@@ -1854,10 +1861,16 @@ struct LocationSimulationView: View {
                 let generation = playbackGeneration
                 let sample = samples[cursor]
 
-                // Wait in short slices so Pause takes effect at once; time already
-                // waited is kept while paused, and the position keeps being refreshed.
+                // Wait in short slices so Pause takes effect at once; the position keeps
+                // being refreshed while paused. Continuous moves keep the time already
+                // waited; point-to-point skips the rest of the stay on Resume.
                 var remainingWait = routeIsHop ? max(dwellSeconds, 0) : sample.delayFromPrevious
+                if skipNextWait {
+                    remainingWait = 0
+                    skipNextWait = false
+                }
                 var pausedWaitTicks = 0
+                var pausedDuringWait = false
                 while remainingWait > 0 {
                     guard !Task.isCancelled,
                           LocationSimulationSession.shared.isCurrentRoute(routeID) else {
@@ -1871,11 +1884,17 @@ struct LocationSimulationView: View {
                     let slice = min(remainingWait, 0.25)
                     try? await Task.sleep(for: .seconds(slice))
                     if isPlaybackPaused {
+                        pausedDuringWait = true
                         pausedWaitTicks += 1
                         if pausedWaitTicks % 16 == 0, let keepCoordinate = lastSuccessfulCoordinate {
                             _ = await sendLocationUpdate(for: keepCoordinate)
                         }
                         continue
+                    }
+                    if pausedDuringWait && routeIsHop {
+                        // Resumed after a pause: do not wait out the rest of the stay.
+                        remainingWait = 0
+                        break
                     }
                     remainingWait -= slice
                 }
