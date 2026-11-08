@@ -50,6 +50,8 @@ private enum RouteSimulationDefaults {
 private struct RoutePlaybackSample {
     let coordinate: CLLocationCoordinate2D
     let delayFromPrevious: TimeInterval
+    /// Index in the route the sample was built from (where the walk has got to).
+    var baseIndex: Int = 0
 }
 
 private struct OpenStreetMapWay {
@@ -304,30 +306,32 @@ private func nearestSpeedLimit(
 }
 
 /// At high speed, keep a point only once the path has moved far enough since the
-/// last kept point, so location updates stay roughly 0.5 s apart.
+/// last kept point, so location updates follow the chosen interval. Each kept point
+/// remembers its index in the original path.
 private func decimatedForPlayback(
     _ coordinates: [CLLocationCoordinate2D],
     speed: CLLocationSpeed
-) -> [CLLocationCoordinate2D] {
+) -> [(coordinate: CLLocationCoordinate2D, index: Int)] {
+    let all = coordinates.enumerated().map { (coordinate: $0.element, index: $0.offset) }
     let spacing = WayfarerSpeed.pathSpacing(forSpeed: speed)
     guard spacing > RouteSimulationDefaults.pathSamplingDistance,
-          coordinates.count > 2,
-          let first = coordinates.first,
-          let last = coordinates.last else {
-        return coordinates
+          all.count > 2,
+          let first = all.first,
+          let last = all.last else {
+        return all
     }
 
-    var result: [CLLocationCoordinate2D] = [first]
+    var result = [first]
     var lastKept = first
-    for coordinate in coordinates.dropFirst() {
-        let distance = CLLocation(latitude: lastKept.latitude, longitude: lastKept.longitude)
-            .distance(from: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude))
+    for item in all.dropFirst() {
+        let distance = CLLocation(latitude: lastKept.coordinate.latitude, longitude: lastKept.coordinate.longitude)
+            .distance(from: CLLocation(latitude: item.coordinate.latitude, longitude: item.coordinate.longitude))
         if distance >= spacing {
-            result.append(coordinate)
-            lastKept = coordinate
+            result.append(item)
+            lastKept = item
         }
     }
-    if lastKept.latitude != last.latitude || lastKept.longitude != last.longitude {
+    if lastKept.index != last.index {
         result.append(last)
     }
     return result
@@ -338,12 +342,16 @@ private func buildPlaybackSamples(
     speedWays: [OpenStreetMapWay],
     fallbackSpeedMetersPerSecond: CLLocationSpeed
 ) -> [RoutePlaybackSample] {
-    let displayCoordinates = decimatedForPlayback(sourceCoordinates, speed: fallbackSpeedMetersPerSecond)
-    guard let firstCoordinate = displayCoordinates.first else { return [] }
+    let points = decimatedForPlayback(sourceCoordinates, speed: fallbackSpeedMetersPerSecond)
+    guard let firstPoint = points.first else { return [] }
 
-    var samples = [RoutePlaybackSample(coordinate: firstCoordinate, delayFromPrevious: 0)]
+    var samples = [
+        RoutePlaybackSample(coordinate: firstPoint.coordinate, delayFromPrevious: 0, baseIndex: firstPoint.index)
+    ]
 
-    for (start, end) in zip(displayCoordinates, displayCoordinates.dropFirst()) {
+    for (startPoint, endPoint) in zip(points, points.dropFirst()) {
+        let start = startPoint.coordinate
+        let end = endPoint.coordinate
         let segmentDistance = CLLocation(latitude: start.latitude, longitude: start.longitude)
             .distance(from: CLLocation(latitude: end.latitude, longitude: end.longitude))
         guard segmentDistance > 0 else { continue }
@@ -361,7 +369,11 @@ private func buildPlaybackSamples(
                 fraction: Double(index) / Double(segmentStepCount)
             )
             if samples.last.map({ CoordinateSnapshot($0.coordinate) }) != CoordinateSnapshot(coordinate) {
-                samples.append(RoutePlaybackSample(coordinate: coordinate, delayFromPrevious: stepDelay))
+                samples.append(RoutePlaybackSample(
+                    coordinate: coordinate,
+                    delayFromPrevious: stepDelay,
+                    baseIndex: index == segmentStepCount ? endPoint.index : startPoint.index
+                ))
             }
         }
     }
@@ -811,6 +823,13 @@ struct LocationSimulationView: View {
     @AppStorage("wayfarer.dwellSeconds") private var dwellSeconds: Double = 3
     @State private var routeIsHop = false
     @State private var showHistory = false
+    @State private var playbackBaseOffset = 0
+    @State private var routeWaypointIndices: [Int] = []
+    @State private var routeLogical = LogicalPlan.empty
+    @State private var routeFromMultiStop = false
+    @State private var routeCycleDirty = false
+    @State private var isReplanning = false
+    @State private var hopRemaining: Double = 0
     @State private var mapCamera: MapCamera?
     @State private var mapHeading: Double = 0
     @StateObject private var locationInfo = LocationInfoModel()
@@ -890,6 +909,12 @@ struct LocationSimulationView: View {
 
     private var routeStatusText: String {
         if simulationSession.routeCoordinates != nil {
+            if isPlaybackPaused {
+                return routeIsHop ? "已暫停（點對點飛）。" : "已暫停。"
+            }
+            if routeIsHop && hopRemaining > 0 {
+                return "點對點飛：\(Int(ceil(hopRemaining))) 秒後飛往下一站。"
+            }
             return "路線模擬中。"
         }
         if isLoadingRoute {
@@ -1223,6 +1248,18 @@ struct LocationSimulationView: View {
         .onChange(of: dwellSeconds) { _, _ in
             dwellChanged()
         }
+        .onChange(of: pathShapeRaw) { _, _ in
+            replanIfPaused()
+        }
+        .onChange(of: followRoads) { _, _ in
+            replanIfPaused()
+        }
+        .onChange(of: hopMode) { _, _ in
+            replanIfPaused()
+        }
+        .onChange(of: repeatRoute) { _, _ in
+            repeatToggled()
+        }
         .onChange(of: infoCoordinate.map(CoordinateSnapshot.init)) { _, newValue in
             locationInfo.update(newValue?.coordinate)
         }
@@ -1379,6 +1416,7 @@ struct LocationSimulationView: View {
         routeSourceFollowRoads = false
         routeSourceShape = .oneWay
         routeIsHop = false
+        routeFromMultiStop = false
         routeStartSelection = RouteSearchSelection(title: "\(sourceName) 起點", coordinate: firstCoordinate)
         routeEndSelection = RouteSearchSelection(title: "\(sourceName) 終點", coordinate: lastCoordinate)
         setRoutePlan(RouteSimulationPlan(
@@ -1491,6 +1529,10 @@ struct LocationSimulationView: View {
             .controlSize(.small)
             .disabled(routePlan == nil || routeSourceStops.count < 2)
 
+            if routeFromMultiStop && isRouteRunning {
+                pausedEditControls
+            }
+
             HStack(spacing: 12) {
                 Button("停止", action: clear)
                     .buttonStyle(.bordered)
@@ -1513,6 +1555,7 @@ struct LocationSimulationView: View {
                         isPlaybackPaused.toggle()
                     }
                     .buttonStyle(.bordered)
+                    .disabled(isReplanning)
                 } else {
                     Button("重設", action: resetRouteSelection)
                         .buttonStyle(.bordered)
@@ -1669,6 +1712,10 @@ struct LocationSimulationView: View {
         multiStops = []
         routeSourceStops = []
         routeIsHop = false
+        routeFromMultiStop = false
+        routeCycleDirty = false
+        isReplanning = false
+        hopRemaining = 0
         repeatPlayback = false
         isPlaybackPaused = false
     }
@@ -1695,6 +1742,7 @@ struct LocationSimulationView: View {
         routeSourceFollowRoads = true
         routeSourceShape = .oneWay
         routeIsHop = false
+        routeFromMultiStop = false
 
         let request = MKDirections.Request()
         request.source = MKMapItem(placemark: MKPlacemark(coordinate: routeStart))
@@ -1788,10 +1836,14 @@ struct LocationSimulationView: View {
 
                 if cursor >= samples.count {
                     if repeatPlayback, samples.count > 1 {
-                        await MainActor.run {
-                            rebuildFullPlaybackSamples()
-                            playbackCursor = 1
-                            playbackGeneration += 1
+                        if routeCycleDirty {
+                            await rebuildCycleForRepeat()
+                        } else {
+                            await MainActor.run {
+                                rebuildFullPlaybackSamples()
+                                playbackCursor = 1
+                                playbackGeneration += 1
+                            }
                         }
                         try? await Task.sleep(for: .milliseconds(500))
                         continue
@@ -1801,8 +1853,35 @@ struct LocationSimulationView: View {
 
                 let generation = playbackGeneration
                 let sample = samples[cursor]
-                let waitSeconds = routeIsHop ? max(dwellSeconds, 0) : sample.delayFromPrevious
-                try? await Task.sleep(for: .seconds(waitSeconds))
+
+                // Wait in short slices so Pause takes effect at once; time already
+                // waited is kept while paused, and the position keeps being refreshed.
+                var remainingWait = routeIsHop ? max(dwellSeconds, 0) : sample.delayFromPrevious
+                var pausedWaitTicks = 0
+                while remainingWait > 0 {
+                    guard !Task.isCancelled,
+                          LocationSimulationSession.shared.isCurrentRoute(routeID) else {
+                        return
+                    }
+                    if generation != playbackGeneration { break }
+                    if routeIsHop {
+                        let shown = remainingWait
+                        await MainActor.run { hopRemaining = shown }
+                    }
+                    let slice = min(remainingWait, 0.25)
+                    try? await Task.sleep(for: .seconds(slice))
+                    if isPlaybackPaused {
+                        pausedWaitTicks += 1
+                        if pausedWaitTicks % 16 == 0, let keepCoordinate = lastSuccessfulCoordinate {
+                            _ = await sendLocationUpdate(for: keepCoordinate)
+                        }
+                        continue
+                    }
+                    remainingWait -= slice
+                }
+                if routeIsHop {
+                    await MainActor.run { hopRemaining = 0 }
+                }
                 guard !Task.isCancelled,
                       LocationSimulationSession.shared.isCurrentRoute(routeID) else {
                     return
@@ -2079,6 +2158,11 @@ extension LocationSimulationView {
         routeSourceFollowRoads = false
         routeSourceShape = shape
         routeIsHop = true
+        routeFromMultiStop = true
+        routeCycleDirty = false
+        routeLogical = LogicalPlan.initial(shape: shape, count: stops.count)
+        routeWaypointIndices = Array(path.indices)
+        playbackBaseOffset = 0
 
         routeStartSelection = RouteSearchSelection(title: "站點 1", coordinate: stops[0])
         let closed = shape != .oneWay
@@ -2115,6 +2199,342 @@ extension LocationSimulationView {
             dwellSeconds: dwellSeconds
         )
         HistoryStore.shared.addRoute(favorite)
+    }
+
+    private func repeatToggled() {
+        guard isRouteRunning else { return }
+        repeatPlayback = repeatRoute && routeSourceShape != .oneWay
+    }
+
+    /// Where the path of the current plan passes each waypoint (searched in order).
+    private func computeWaypointIndices(
+        path: [CLLocationCoordinate2D],
+        waypoints: [CLLocationCoordinate2D]
+    ) -> [Int] {
+        var result: [Int] = []
+        var cursor = 0
+        let tolerance = 0.000_001
+        for waypoint in waypoints {
+            var found = cursor
+            var index = cursor
+            while index < path.count {
+                if abs(path[index].latitude - waypoint.latitude) < tolerance
+                    && abs(path[index].longitude - waypoint.longitude) < tolerance {
+                    found = index
+                    break
+                }
+                index += 1
+            }
+            result.append(found)
+            cursor = found
+        }
+        return result
+    }
+
+    /// How many waypoints after the start have been reached so far.
+    private func passedWaypointCount() -> Int {
+        if routeIsHop {
+            return max(playbackCursor - 1, 0)
+        }
+        let lastIndex = max(playbackCursor - 1, 0)
+        guard routePlaybackSamples.indices.contains(lastIndex),
+              routeWaypointIndices.count > 1 else {
+            return 0
+        }
+        let absolute = playbackBaseOffset + routePlaybackSamples[lastIndex].baseIndex
+        var passed = 0
+        for index in 1..<routeWaypointIndices.count where routeWaypointIndices[index] <= absolute {
+            passed += 1
+        }
+        return passed
+    }
+
+    private func hopPath(stops: [CLLocationCoordinate2D], shape: RouteShape) -> [CLLocationCoordinate2D] {
+        var path = stops
+        switch shape {
+        case .oneWay:
+            break
+        case .roundTrip:
+            path.append(contentsOf: stops.reversed().dropFirst())
+        case .circuit:
+            if let first = stops.first { path.append(first) }
+        }
+        return path
+    }
+
+    private func applyReplan(
+        plan: RouteSimulationPlan,
+        samples: [RoutePlaybackSample],
+        indices: [Int],
+        logical: LogicalPlan,
+        shape: RouteShape,
+        roads: Bool,
+        hop: Bool
+    ) {
+        setRoutePlan(plan)
+        routePlaybackSamples = samples
+        playbackBaseOffset = 0
+        routeWaypointIndices = indices
+        routeLogical = logical
+        routeSourceShape = shape
+        routeSourceFollowRoads = roads
+        routeIsHop = hop
+        repeatPlayback = repeatRoute && shape != .oneWay
+        routeCycleDirty = true
+        playbackCursor = 1
+        playbackGeneration += 1
+        isReplanning = false
+    }
+
+    private func revertPausedSettings() {
+        pathShapeRaw = routeSourceShape.rawValue
+        followRoads = routeSourceFollowRoads
+        hopMode = routeIsHop
+    }
+
+    /// While paused, changing the walk style re-plans the rest of the trip from here.
+    private func replanIfPaused() {
+        guard isRouteRunning, isPlaybackPaused, routeFromMultiStop, !isReplanning else { return }
+        let stops = routeSourceStops
+        guard stops.count >= 2, let current = routePlaybackCoordinate else { return }
+
+        let newShape = pathShape
+        let roads = followRoads
+        let hop = hopMode
+        if newShape == routeSourceShape && roads == routeSourceFollowRoads && hop == routeIsHop {
+            return
+        }
+
+        guard let state = routeLogical.remaining(after: passedWaypointCount()) else {
+            revertPausedSettings()
+            alertTitle = "路線已走完"
+            alertMessage = "已經走到最後，沒有後續路線可以調整。"
+            showAlert = true
+            return
+        }
+
+        let newLogical: LogicalPlan?
+        if state.isReturning {
+            newLogical = LogicalPlan.makeReturning(shape: newShape, next: state.next)
+        } else {
+            newLogical = LogicalPlan.make(shape: newShape, count: stops.count, nextOutbound: state.next)
+        }
+        guard let newLogical, !newLogical.sequence.isEmpty else {
+            revertPausedSettings()
+            alertTitle = "無法改成單程"
+            alertMessage = "已經在回程中，無法改成單程。可以選「來回」繼續回程，或「繞圈」直接回到起點。"
+            showAlert = true
+            return
+        }
+
+        let waypoints = [current] + newLogical.sequence.map { stops[$0] }
+        let mode = travelMode
+        let speedMps = WayfarerSpeed.metersPerSecond(fromKmh: speedKmh)
+        isReplanning = true
+
+        if hop {
+            var distance: CLLocationDistance = 0
+            for (a, b) in zip(waypoints, waypoints.dropFirst()) {
+                distance += WayfarerRouteBuilder.straightDistance(a, b)
+            }
+            let plan = RouteSimulationPlan(
+                displayCoordinates: waypoints,
+                distance: distance,
+                expectedTravelTime: max(dwellSeconds, 0) * Double(max(waypoints.count - 1, 0))
+            )
+            applyReplan(
+                plan: plan,
+                samples: hopSamples(for: waypoints),
+                indices: Array(waypoints.indices),
+                logical: newLogical,
+                shape: newShape,
+                roads: roads,
+                hop: true
+            )
+            return
+        }
+
+        Task {
+            do {
+                let built = try await WayfarerRouteBuilder.buildSequence(
+                    points: waypoints,
+                    mode: mode,
+                    followRoads: roads
+                )
+                let displayCoordinates = sampledRouteCoordinates(
+                    from: built.coordinates,
+                    targetDistance: WayfarerSpeed.pathSpacing(forSpeed: speedMps)
+                )
+                let plan = RouteSimulationPlan(
+                    displayCoordinates: displayCoordinates,
+                    distance: built.distance,
+                    expectedTravelTime: built.distance / speedMps
+                )
+                let samples = buildPlaybackSamples(
+                    from: displayCoordinates,
+                    speedWays: [],
+                    fallbackSpeedMetersPerSecond: speedMps
+                )
+                let indices = computeWaypointIndices(
+                    path: displayCoordinates,
+                    waypoints: built.waypointCoordinates
+                )
+                await MainActor.run {
+                    applyReplan(
+                        plan: plan,
+                        samples: samples,
+                        indices: indices,
+                        logical: newLogical,
+                        shape: newShape,
+                        roads: roads,
+                        hop: false
+                    )
+                    if built.straightLegCount > 0 {
+                        alertTitle = "部分路段改用直線"
+                        alertMessage = "有 \(built.straightLegCount) 段找不到道路路線，已改用直線連接。"
+                        showAlert = true
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    isReplanning = false
+                    revertPausedSettings()
+                    alertTitle = "重新規劃失敗"
+                    alertMessage = error.localizedDescription
+                    showAlert = true
+                }
+            }
+        }
+    }
+
+    /// After an edit mid-route, the next lap of a repeating route is built afresh
+    /// from the stops with the current settings.
+    private func rebuildCycleForRepeat() async {
+        let stops = routeSourceStops
+        let shape = routeSourceShape
+        let roads = routeSourceFollowRoads
+        let hop = routeIsHop
+        let mode = travelMode
+        let speedMps = WayfarerSpeed.metersPerSecond(fromKmh: speedKmh)
+        guard stops.count >= 2 else { return }
+
+        if hop {
+            let path = hopPath(stops: stops, shape: shape)
+            var distance: CLLocationDistance = 0
+            for (a, b) in zip(path, path.dropFirst()) {
+                distance += WayfarerRouteBuilder.straightDistance(a, b)
+            }
+            let plan = RouteSimulationPlan(
+                displayCoordinates: path,
+                distance: distance,
+                expectedTravelTime: max(dwellSeconds, 0) * Double(max(path.count - 1, 0))
+            )
+            await MainActor.run {
+                applyReplan(
+                    plan: plan,
+                    samples: hopSamples(for: path),
+                    indices: Array(path.indices),
+                    logical: LogicalPlan.initial(shape: shape, count: stops.count),
+                    shape: shape,
+                    roads: roads,
+                    hop: true
+                )
+                routeCycleDirty = false
+            }
+            return
+        }
+
+        do {
+            let built = try await WayfarerRouteBuilder.build(
+                stops: stops,
+                shape: shape,
+                mode: mode,
+                followRoads: roads
+            )
+            let displayCoordinates = sampledRouteCoordinates(
+                from: built.coordinates,
+                targetDistance: WayfarerSpeed.pathSpacing(forSpeed: speedMps)
+            )
+            let plan = RouteSimulationPlan(
+                displayCoordinates: displayCoordinates,
+                distance: built.distance,
+                expectedTravelTime: built.distance / speedMps
+            )
+            let samples = buildPlaybackSamples(
+                from: displayCoordinates,
+                speedWays: [],
+                fallbackSpeedMetersPerSecond: speedMps
+            )
+            let indices = computeWaypointIndices(path: displayCoordinates, waypoints: built.waypointCoordinates)
+            await MainActor.run {
+                applyReplan(
+                    plan: plan,
+                    samples: samples,
+                    indices: indices,
+                    logical: LogicalPlan.initial(shape: shape, count: stops.count),
+                    shape: shape,
+                    roads: roads,
+                    hop: false
+                )
+                routeCycleDirty = false
+            }
+        } catch {
+            await MainActor.run {
+                rebuildFullPlaybackSamples()
+                playbackCursor = 1
+                playbackGeneration += 1
+                routeCycleDirty = false
+            }
+        }
+    }
+
+    private var pausedEditControls: some View {
+        VStack(spacing: 8) {
+            Text(isPlaybackPaused
+                 ? "暫停中：可以調整後續路線，調整完按「繼續」。"
+                 : "想調整點對點飛、連線方式、走法？先按「暫停」。")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            Toggle("點對點飛（逐點瞬移）", isOn: $hopMode)
+                .font(.subheadline)
+
+            if !hopMode {
+                HStack(spacing: 8) {
+                    Text("連線方式")
+                        .font(.subheadline)
+                    Picker("連線方式", selection: $followRoads) {
+                        Text("直線").tag(false)
+                        Text("導航").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                }
+            }
+
+            HStack(spacing: 8) {
+                Text("走法")
+                    .font(.subheadline)
+                Picker("走法", selection: $pathShapeRaw) {
+                    ForEach(RouteShape.allCases) { shape in
+                        Text(shape.title).tag(shape.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+
+            if pathShape != .oneWay {
+                Toggle("重複播放（直到按停止）", isOn: $repeatRoute)
+                    .font(.subheadline)
+            }
+
+            if isReplanning {
+                ProgressView("重新規劃中…")
+                    .font(.footnote)
+            }
+        }
+        .padding(10)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .disabled(!isPlaybackPaused || isReplanning)
     }
 
     private func dwellChanged() {
@@ -2193,6 +2613,7 @@ extension LocationSimulationView {
         routeSourceFollowRoads = roads
         routeSourceShape = shape
         routeIsHop = false
+        routeFromMultiStop = false
 
         routeStartSelection = RouteSearchSelection(title: "站點 1", coordinate: stopCoordinates[0])
         let closed = shape != .oneWay
@@ -2232,6 +2653,14 @@ extension LocationSimulationView {
                     setRoutePlan(plan)
                     routePlaybackSamples = samples
                     repeatPlayback = shouldRepeat
+                    routeLogical = LogicalPlan.initial(shape: shape, count: stopCoordinates.count)
+                    routeWaypointIndices = computeWaypointIndices(
+                        path: displayCoordinates,
+                        waypoints: built.waypointCoordinates
+                    )
+                    playbackBaseOffset = 0
+                    routeFromMultiStop = true
+                    routeCycleDirty = false
                     isLoadingRoute = false
                     if let routePolyline {
                         position = .rect(routePolyline.boundingMapRect)
@@ -2322,6 +2751,7 @@ extension LocationSimulationView {
 
     private func rebuildFullPlaybackSamples() {
         guard let plan = routePlan else { return }
+        playbackBaseOffset = 0
         if routeIsHop {
             routePlaybackSamples = hopSamples(for: plan.displayCoordinates)
             return
@@ -2348,25 +2778,21 @@ extension LocationSimulationView {
         guard base.count > 1 else { return }
 
         if routePlaybackTask != nil, let current = routePlaybackCoordinate {
-            let currentLocation = CLLocation(latitude: current.latitude, longitude: current.longitude)
-            var bestIndex = 0
-            var bestDistance = CLLocationDistance.greatestFiniteMagnitude
-            for (index, candidate) in base.enumerated() {
-                let candidateDistance = currentLocation.distance(
-                    from: CLLocation(latitude: candidate.latitude, longitude: candidate.longitude)
-                )
-                if candidateDistance < bestDistance {
-                    bestDistance = candidateDistance
-                    bestIndex = index
-                }
-            }
-            let remaining = [current] + Array(base.dropFirst(min(bestIndex + 1, base.count)))
+            // Continue from where the walk really is (the nearest point would be wrong on
+            // a round trip, where the way back passes the same places as the way out).
+            let lastIndex = max(playbackCursor - 1, 0)
+            let localIndex = routePlaybackSamples.indices.contains(lastIndex)
+                ? routePlaybackSamples[lastIndex].baseIndex
+                : 0
+            let absoluteIndex = min(playbackBaseOffset + localIndex, base.count - 1)
+            let remaining = [current] + Array(base.dropFirst(min(absoluteIndex + 1, base.count)))
             let samples = buildPlaybackSamples(
                 from: remaining,
                 speedWays: [],
                 fallbackSpeedMetersPerSecond: speedMps
             )
             routePlaybackSamples = samples
+            playbackBaseOffset = absoluteIndex
             playbackGeneration += 1
             playbackCursor = 1
         } else if !isRouteRunning {

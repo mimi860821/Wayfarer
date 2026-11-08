@@ -111,6 +111,56 @@ struct WayfarerBuiltRoute {
     let distance: CLLocationDistance
     /// Number of legs where MapKit found no route and a straight line was used.
     let straightLegCount: Int
+    /// The path vertex at each waypoint (start, every stop, end), in travel order.
+    let waypointCoordinates: [CLLocationCoordinate2D]
+}
+
+/// The stops still to visit, as indices into the user's stop list, so a route can be
+/// re-planned from the middle (for example, when paused and the walk style changes).
+struct LogicalPlan {
+    /// Stop indices still to visit, in order, after the starting position.
+    var sequence: [Int]
+    /// Positions at or after this are the way back.
+    var returnStart: Int
+
+    static let empty = LogicalPlan(sequence: [], returnStart: 0)
+
+    static func initial(shape: RouteShape, count: Int) -> LogicalPlan {
+        make(shape: shape, count: count, nextOutbound: 1) ?? .empty
+    }
+
+    /// Heading outbound to stop `k`.
+    static func make(shape: RouteShape, count n: Int, nextOutbound k: Int) -> LogicalPlan? {
+        guard n >= 2, k >= 1, k <= n - 1 else { return nil }
+        let outbound = Array(k...(n - 1))
+        switch shape {
+        case .oneWay:
+            return LogicalPlan(sequence: outbound, returnStart: outbound.count)
+        case .roundTrip:
+            let back = Array(stride(from: n - 2, through: 0, by: -1))
+            return LogicalPlan(sequence: outbound + back, returnStart: outbound.count)
+        case .circuit:
+            return LogicalPlan(sequence: outbound + [0], returnStart: outbound.count)
+        }
+    }
+
+    /// Already on the way back, next heading to stop `m`. Not possible for a one-way trip.
+    static func makeReturning(shape: RouteShape, next m: Int) -> LogicalPlan? {
+        guard m >= 0 else { return nil }
+        switch shape {
+        case .oneWay:
+            return nil
+        case .roundTrip:
+            return LogicalPlan(sequence: Array(stride(from: m, through: 0, by: -1)), returnStart: 0)
+        case .circuit:
+            return LogicalPlan(sequence: [0], returnStart: 0)
+        }
+    }
+
+    func remaining(after passed: Int) -> (isReturning: Bool, next: Int)? {
+        guard passed >= 0, passed < sequence.count else { return nil }
+        return (passed >= returnStart, sequence[passed])
+    }
 }
 
 enum WayfarerRouteBuilder {
@@ -128,7 +178,7 @@ enum WayfarerRouteBuilder {
             .distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude))
     }
 
-    /// Builds one continuous path through all stops, using MapKit directions for each leg.
+    /// Builds one continuous path through all stops with the chosen shape.
     static func build(
         stops: [CLLocationCoordinate2D],
         shape: RouteShape,
@@ -139,6 +189,30 @@ enum WayfarerRouteBuilder {
         if shape == .circuit, let first = stops.first, stops.count > 1 {
             points.append(first)
         }
+
+        var route = try await buildSequence(points: points, mode: mode, followRoads: followRoads)
+        if shape == .roundTrip {
+            var coordinates = route.coordinates
+            coordinates.append(contentsOf: route.coordinates.reversed().dropFirst())
+            var waypoints = route.waypointCoordinates
+            waypoints.append(contentsOf: route.waypointCoordinates.reversed().dropFirst())
+            route = WayfarerBuiltRoute(
+                coordinates: coordinates,
+                distance: route.distance * 2,
+                straightLegCount: route.straightLegCount,
+                waypointCoordinates: waypoints
+            )
+        }
+        return route
+    }
+
+    /// Builds the path that visits `points` in order, using MapKit directions per leg
+    /// when `followRoads` is on, and records the path vertex of every waypoint.
+    static func buildSequence(
+        points: [CLLocationCoordinate2D],
+        mode: TravelMode,
+        followRoads: Bool
+    ) async throws -> WayfarerBuiltRoute {
         guard points.count >= 2 else {
             throw NSError(
                 domain: "Wayfarer",
@@ -152,15 +226,16 @@ enum WayfarerRouteBuilder {
             for (a, b) in zip(points, points.dropFirst()) {
                 total += straightDistance(a, b)
             }
-            var path = points
-            if shape == .roundTrip {
-                path.append(contentsOf: points.reversed().dropFirst())
-                total *= 2
-            }
-            return WayfarerBuiltRoute(coordinates: path, distance: total, straightLegCount: 0)
+            return WayfarerBuiltRoute(
+                coordinates: points,
+                distance: total,
+                straightLegCount: 0,
+                waypointCoordinates: points
+            )
         }
 
         var allCoordinates: [CLLocationCoordinate2D] = []
+        var boundaries: [CLLocationCoordinate2D] = []
         var totalDistance: CLLocationDistance = 0
         var straightLegs = 0
 
@@ -199,6 +274,13 @@ enum WayfarerRouteBuilder {
                 straightLegs += 1
             }
 
+            if index == 0, let first = legCoordinates.first {
+                boundaries.append(first)
+            }
+            if let last = legCoordinates.last {
+                boundaries.append(last)
+            }
+
             if allCoordinates.isEmpty {
                 allCoordinates.append(contentsOf: legCoordinates)
             } else {
@@ -207,15 +289,11 @@ enum WayfarerRouteBuilder {
             totalDistance += legDistance
         }
 
-        if shape == .roundTrip {
-            allCoordinates.append(contentsOf: allCoordinates.reversed().dropFirst())
-            totalDistance *= 2
-        }
-
         return WayfarerBuiltRoute(
             coordinates: allCoordinates,
             distance: totalDistance,
-            straightLegCount: straightLegs
+            straightLegCount: straightLegs,
+            waypointCoordinates: boundaries
         )
     }
 }
