@@ -823,6 +823,7 @@ struct LocationSimulationView: View {
     @AppStorage("wayfarer.dwellSeconds") private var dwellSeconds: Double = 3
     @State private var routeIsHop = false
     @State private var showHistory = false
+    @State private var panelCollapsed = false
     @State private var playbackBaseOffset = 0
     @State private var routeWaypointIndices: [Int] = []
     @State private var routeLogical = LogicalPlan.empty
@@ -1042,30 +1043,38 @@ struct LocationSimulationView: View {
                 Spacer()
 
                 VStack(spacing: 12) {
-                    if isImportingCoordinates {
-                        ProgressView("正在匯入座標…")
-                            .font(.footnote)
-                    }
-
-                    if !hasRouteContext {
-                        Picker("功能", selection: $panelTab) {
-                            ForEach(WayfarerTab.allCases) { tab in
-                                Text(tab.title).tag(tab)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                    }
-
-                    if hasRouteContext {
-                        routeControls
+                    if isRouteRunning && panelCollapsed {
+                        collapsedBar
                     } else {
-                        switch panelTab {
-                        case .teleport:
-                            pinControls
-                        case .navigate:
-                            navigateControls
-                        case .multi:
-                            multiStopControls
+                        if isRouteRunning {
+                            panelHandle
+                        }
+
+                        if isImportingCoordinates {
+                            ProgressView("正在匯入座標…")
+                                .font(.footnote)
+                        }
+
+                        if !hasRouteContext {
+                            Picker("功能", selection: $panelTab) {
+                                ForEach(WayfarerTab.allCases) { tab in
+                                    Text(tab.title).tag(tab)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                        }
+
+                        if hasRouteContext {
+                            routeControls
+                        } else {
+                            switch panelTab {
+                            case .teleport:
+                                pinControls
+                            case .navigate:
+                                navigateControls
+                            case .multi:
+                                multiStopControls
+                            }
                         }
                     }
                 }
@@ -1073,6 +1082,11 @@ struct LocationSimulationView: View {
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                 .padding(.horizontal, 12)
                 .padding(.bottom, 12)
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 24).onEnded { value in
+                        handlePanelDrag(value.translation)
+                    }
+                )
             }
         }
         .overlay(alignment: .top) {
@@ -1247,6 +1261,11 @@ struct LocationSimulationView: View {
         }
         .onChange(of: dwellSeconds) { _, _ in
             dwellChanged()
+        }
+        .onChange(of: isRouteRunning) { _, running in
+            if !running {
+                panelCollapsed = false
+            }
         }
         .onChange(of: pathShapeRaw) { _, _ in
             replanIfPaused()
@@ -2227,6 +2246,88 @@ extension LocationSimulationView {
             dwellSeconds: dwellSeconds
         )
         HistoryStore.shared.addRoute(favorite)
+    }
+
+    /// Swipe down shrinks the panel to one row while a route runs; swipe up brings it back.
+    private func handlePanelDrag(_ translation: CGSize) {
+        guard isRouteRunning else { return }
+        guard abs(translation.height) > abs(translation.width) * 1.5 else { return }
+        if translation.height > 40 {
+            withAnimation(.easeInOut(duration: 0.25)) { panelCollapsed = true }
+        } else if translation.height < -40 {
+            withAnimation(.easeInOut(duration: 0.25)) { panelCollapsed = false }
+        }
+    }
+
+    private var panelHandle: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.25)) { panelCollapsed = true }
+        } label: {
+            VStack(spacing: 3) {
+                Capsule()
+                    .fill(Color.secondary.opacity(0.45))
+                    .frame(width: 40, height: 5)
+                Text("往下滑，縮小成一列")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("縮小設定面板")
+    }
+
+    /// "已到 2／5 站" for multi-stop routes.
+    private var routeProgressText: String? {
+        guard routeFromMultiStop, !routeLogical.sequence.isEmpty else { return nil }
+        let total = routeLogical.sequence.count
+        return "已到 \(min(passedWaypointCount(), total))／\(total) 站"
+    }
+
+    private var collapsedBar: some View {
+        HStack(spacing: 10) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.25)) { panelCollapsed = false }
+            } label: {
+                Image(systemName: "chevron.up")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("展開設定面板")
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(routeStatusText)
+                    .font(.footnote)
+                    .lineLimit(1)
+                if let progress = routeProgressText {
+                    Text(progress)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            Button {
+                isPlaybackPaused.toggle()
+            } label: {
+                Image(systemName: isPlaybackPaused ? "play.fill" : "pause.fill")
+                    .frame(width: 22)
+            }
+            .buttonStyle(.bordered)
+            .disabled(isReplanning)
+            .accessibilityLabel(isPlaybackPaused ? "繼續" : "暫停")
+
+            Button(action: clear) {
+                Image(systemName: "stop.fill")
+                    .frame(width: 22)
+            }
+            .buttonStyle(.bordered)
+            .tint(.red)
+            .disabled(!pairingExists || isBusy)
+            .accessibilityLabel("停止")
+        }
     }
 
     private func repeatToggled() {
