@@ -300,6 +300,13 @@ final class FavoritesStore: ObservableObject {
         save()
     }
 
+    func moveCoordinates(_ ids: Set<UUID>, to categoryID: UUID?) {
+        for index in data.coordinates.indices where ids.contains(data.coordinates[index].id) {
+            data.coordinates[index].categoryID = categoryID
+        }
+        save()
+    }
+
     func deleteCoordinate(_ id: UUID) {
         data.coordinates.removeAll { $0.id == id }
         save()
@@ -417,6 +424,8 @@ struct FavoritesSheet: View {
     @State private var showCategoryManager = false
     @State private var showRename = false
     @State private var showImporter = false
+    @State private var selecting = false
+    @State private var selectedIDs: Set<UUID> = []
     @State private var importMessage: String?
     @State private var renameText = ""
     @State private var renamingCoordinateID: UUID?
@@ -465,6 +474,11 @@ struct FavoritesSheet: View {
                     routesContent
                 }
             }
+            .safeAreaInset(edge: .bottom) {
+                if selecting && section == 0 {
+                    selectionBar
+                }
+            }
             .navigationTitle("收藏")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -472,6 +486,12 @@ struct FavoritesSheet: View {
                     Button("關閉") { dismiss() }
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button(selecting ? "完成" : "選取") {
+                        selecting.toggle()
+                        selectedIDs = []
+                    }
+                    .disabled(section != 0)
+
                     Button {
                         showImporter = true
                     } label: {
@@ -495,6 +515,13 @@ struct FavoritesSheet: View {
             }
             .task {
                 await store.fillMissingPlaceInfo()
+            }
+            .onChange(of: section) { _, _ in
+                selecting = false
+                selectedIDs = []
+            }
+            .onChange(of: filter) { _, _ in
+                selectedIDs = []
             }
             .sheet(isPresented: $showCategoryManager) {
                 CategoryManagerSheet()
@@ -609,33 +636,120 @@ struct FavoritesSheet: View {
                 }
                 .listStyle(.plain)
 
-                HintFooter(text: "點一下直接瞬移；向右滑只放置圖釘，向左滑刪除；長按可重新命名或移動分類。")
+                HintFooter(text: selecting
+                           ? "點一下勾選項目，再按下方「移動到分類」。"
+                           : "點一下直接瞬移；向右滑只放置圖釘，向左滑刪除；長按可重新命名或移動分類。")
             }
         }
     }
 
+    @ViewBuilder
     private func coordinateRow(_ favorite: CoordinateFavorite) -> some View {
+        if selecting {
+            selectableRow(favorite)
+        } else {
+            normalRow(favorite)
+        }
+    }
+
+    private func rowText(_ favorite: CoordinateFavorite) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(favorite.name)
+                .foregroundStyle(.primary)
+            TimelineView(.everyMinute) { context in
+                Text(TimeZoneFormat.describe(
+                    countryCode: favorite.countryCode,
+                    timeZoneID: favorite.timeZoneID,
+                    at: context.date
+                ))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            Text("\(store.categoryName(for: favorite.categoryID)) · "
+                 + String(format: "%.5f, %.5f", favorite.latitude, favorite.longitude))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    private func selectableRow(_ favorite: CoordinateFavorite) -> some View {
+        let isSelected = selectedIDs.contains(favorite.id)
+        return Button {
+            if isSelected {
+                selectedIDs.remove(favorite.id)
+            } else {
+                selectedIDs.insert(favorite.id)
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+                rowText(favorite)
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var allSelected: Bool {
+        !sortedCoordinates.isEmpty && sortedCoordinates.allSatisfy { selectedIDs.contains($0.id) }
+    }
+
+    private func toggleSelectAll() {
+        if allSelected {
+            selectedIDs = []
+        } else {
+            selectedIDs = Set(sortedCoordinates.map { $0.id })
+        }
+    }
+
+    private func moveSelected(to categoryID: UUID?) {
+        guard !selectedIDs.isEmpty else { return }
+        store.moveCoordinates(selectedIDs, to: categoryID)
+        selectedIDs = []
+    }
+
+    private var selectionBar: some View {
+        HStack(spacing: 12) {
+            Button(allSelected ? "取消全選" : "全選") {
+                toggleSelectAll()
+            }
+
+            Spacer()
+
+            Text("已選 \(selectedIDs.count) 項")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            Spacer()
+
+            Menu {
+                Button("未分類") {
+                    moveSelected(to: nil)
+                }
+                ForEach(store.data.categories) { category in
+                    Button(category.name) {
+                        moveSelected(to: category.id)
+                    }
+                }
+            } label: {
+                Label("移動到分類", systemImage: "folder")
+            }
+            .disabled(selectedIDs.isEmpty)
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+        .background(.regularMaterial)
+    }
+
+    private func normalRow(_ favorite: CoordinateFavorite) -> some View {
         Button {
             onTeleportCoordinate(favorite)
             dismiss()
         } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(favorite.name)
-                    .foregroundStyle(.primary)
-                TimelineView(.everyMinute) { context in
-                    Text(TimeZoneFormat.describe(
-                        countryCode: favorite.countryCode,
-                        timeZoneID: favorite.timeZoneID,
-                        at: context.date
-                    ))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-                Text("\(store.categoryName(for: favorite.categoryID)) · "
-                     + String(format: "%.5f, %.5f", favorite.latitude, favorite.longitude))
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
+            rowText(favorite)
         }
         .swipeActions(edge: .leading) {
             Button {
