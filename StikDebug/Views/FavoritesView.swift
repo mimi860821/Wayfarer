@@ -7,6 +7,7 @@
 
 import SwiftUI
 import CoreLocation
+import UniformTypeIdentifiers
 
 // MARK: - Models
 
@@ -57,6 +58,34 @@ struct FavoritesData: Codable {
     var categories: [FavoriteCategory] = []
     var coordinates: [CoordinateFavorite] = []
     var routes: [RouteFavorite] = []
+}
+
+// MARK: - Bookmark file import (LocWarp format)
+
+private struct LocWarpCategory: Decodable {
+    let id: String
+    let name: String
+    let sort_order: Int?
+}
+
+private struct LocWarpBookmark: Decodable {
+    let name: String?
+    let lat: Double?
+    let lng: Double?
+    let category_id: String?
+    let created_at: String?
+    let country_code: String?
+}
+
+private struct LocWarpFile: Decodable {
+    let categories: [LocWarpCategory]?
+    let bookmarks: [LocWarpBookmark]
+}
+
+struct BookmarkImportSummary {
+    var added = 0
+    var skipped = 0
+    var categoriesAdded = 0
 }
 
 // MARK: - Store
@@ -149,6 +178,63 @@ final class FavoritesStore: ObservableObject {
             return "未分類"
         }
         return category.name
+    }
+
+    /// Imports a bookmarks file exported by LocWarp (categories plus bookmarks).
+    /// Already present favorites (same name and coordinate) are skipped.
+    func importLocWarpBookmarks(_ raw: Data) throws -> BookmarkImportSummary {
+        let file = try JSONDecoder().decode(LocWarpFile.self, from: raw)
+        var summary = BookmarkImportSummary()
+
+        var categoryMap: [String: UUID] = [:]
+        let categories = (file.categories ?? []).sorted { ($0.sort_order ?? 0) < ($1.sort_order ?? 0) }
+        for category in categories {
+            let before = data.categories.count
+            if let id = addCategory(category.name) {
+                categoryMap[category.id] = id
+                if data.categories.count > before {
+                    summary.categoriesAdded += 1
+                }
+            }
+        }
+
+        // Oldest first, so the "added" order matches the original file.
+        let bookmarks = file.bookmarks.sorted { ($0.created_at ?? "") < ($1.created_at ?? "") }
+        for bookmark in bookmarks {
+            guard let latitude = bookmark.lat, let longitude = bookmark.lng,
+                  abs(latitude) <= 90, abs(longitude) <= 180 else {
+                summary.skipped += 1
+                continue
+            }
+
+            let name = (bookmark.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let finalName = name.isEmpty ? String(format: "%.4f, %.4f", latitude, longitude) : name
+            let exists = data.coordinates.contains {
+                abs($0.latitude - latitude) < 0.000_001
+                    && abs($0.longitude - longitude) < 0.000_001
+                    && $0.name == finalName
+            }
+            if exists {
+                summary.skipped += 1
+                continue
+            }
+
+            var favorite = CoordinateFavorite(
+                name: finalName,
+                latitude: latitude,
+                longitude: longitude,
+                categoryID: bookmark.category_id.flatMap { categoryMap[$0] }
+            )
+            let code = (bookmark.country_code ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !code.isEmpty {
+                favorite.countryCode = code.uppercased()
+            }
+            data.coordinates.append(favorite)
+            summary.added += 1
+        }
+
+        save()
+        return summary
     }
 
     // Categories
@@ -330,6 +416,8 @@ struct FavoritesSheet: View {
     @State private var filter: FavoriteFilter = .all
     @State private var showCategoryManager = false
     @State private var showRename = false
+    @State private var showImporter = false
+    @State private var importMessage: String?
     @State private var renameText = ""
     @State private var renamingCoordinateID: UUID?
     @State private var renamingRouteID: UUID?
@@ -384,6 +472,13 @@ struct FavoritesSheet: View {
                     Button("關閉") { dismiss() }
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button {
+                        showImporter = true
+                    } label: {
+                        Image(systemName: "square.and.arrow.down")
+                    }
+                    .accessibilityLabel("匯入收藏檔")
+
                     Menu {
                         Picker("排序", selection: $sortRaw) {
                             ForEach(FavoriteSort.allCases) { option in
@@ -409,8 +504,53 @@ struct FavoritesSheet: View {
                 Button("儲存") { applyRename() }
                 Button("取消", role: .cancel) { }
             }
+            .fileImporter(
+                isPresented: $showImporter,
+                allowedContentTypes: [.json, .plainText, .data],
+                allowsMultipleSelection: false
+            ) { result in
+                importBookmarkFile(result)
+            }
+            .alert(
+                "匯入收藏",
+                isPresented: Binding(
+                    get: { importMessage != nil },
+                    set: { if !$0 { importMessage = nil } }
+                )
+            ) {
+                Button("好", role: .cancel) { }
+            } message: {
+                Text(importMessage ?? "")
+            }
         }
         .presentationDetents([.large])
+    }
+
+    private func importBookmarkFile(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            guard let url = urls.first else { return }
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer {
+                if accessing {
+                    url.stopAccessingSecurityScopedResource()
+                }
+            }
+            do {
+                let data = try Data(contentsOf: url)
+                let summary = try store.importLocWarpBookmarks(data)
+                section = 0
+                filter = .all
+                importMessage = "已匯入 \(summary.added) 筆座標、新增 \(summary.categoriesAdded) 個分類。"
+                    + (summary.skipped > 0 ? "\n略過 \(summary.skipped) 筆（已存在或座標無效）。" : "")
+                    + "\n地名、國家與時區會在背景補查，需要一點時間。"
+                Task { await store.fillMissingPlaceInfo() }
+            } catch {
+                importMessage = "無法讀取這個檔案，請確認是收藏匯出的 JSON 檔。"
+            }
+        case .failure:
+            importMessage = "無法開啟檔案。"
+        }
     }
 
     private func applyRename() {
