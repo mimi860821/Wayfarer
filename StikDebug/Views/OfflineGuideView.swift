@@ -18,7 +18,7 @@ struct OfflineGuideView: View {
             return "目前是「Wi-Fi 關閉、行動數據開啟」。這個狀態下手機的服務會拒絕連線，請照下面的步驟操作。"
         }
         if network.isOffline {
-            return "目前沒有網路（可能是飛航模式）。如果 LocalDevVPN 已連線，現在可以直接在 Wayfarer 瞬移或播放路線。"
+            return "目前沒有網路（可能是飛航模式）。如果 LocalDevVPN 已連線，現在可以直接在 iKiwi 瞬移或播放路線。"
         }
         return "目前的網路狀態不明。"
     }
@@ -42,12 +42,12 @@ struct OfflineGuideView: View {
                 step(1, "關閉 Wi-Fi，保持行動數據開啟。")
                 step(2, "開啟 LocalDevVPN 並連線。這一步需要有網路，所以要在開飛航模式之前完成。")
                 step(3, "開啟飛航模式（Wi-Fi 保持關閉）。")
-                step(4, "回到 Wayfarer，瞬移或播放路線，讓連線建立。")
+                step(4, "回到 iKiwi，瞬移或播放路線，讓連線建立。")
                 step(5, "關閉飛航模式。行動數據恢復，位置和路線會繼續。")
             }
 
             Section("注意事項") {
-                note("不要把 Wayfarer 從 App 切換畫面上滑關掉，設定裡的「背景保持運作」請保持開啟。")
+                note("不要把 iKiwi 從 App 切換畫面上滑關掉，設定裡的「背景保持運作」請保持開啟。")
                 note("連線可能因為長時間背景、重新開機、LocalDevVPN 斷線而中斷，中斷後位置會恢復成真實位置。這時請重做上面的步驟。")
                 note("飛航模式下沒有網路，無法向地圖查詢道路。要用「導航」連線方式，請在步驟 3 之前先規劃好路線；「直線」連線方式不需要網路。")
                 note("有連上任何 Wi-Fi（即使那個 Wi-Fi 不能上網）時，不需要這些步驟。")

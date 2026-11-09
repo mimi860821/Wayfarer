@@ -67,7 +67,7 @@ enum AppFeature: String, CaseIterable, Identifiable {
         case .location:
             return "模擬 GPS 定位"
         case .settings:
-            return "設定 Wayfarer"
+            return "設定 iKiwi"
         }
     }
 

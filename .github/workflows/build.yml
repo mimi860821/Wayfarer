@@ -31,10 +31,10 @@ jobs:
       - name: Build archive (unsigned)
         run: |
           xcodebuild clean archive \
-            -project Wayfarer.xcodeproj \
+            -project iKiwi.xcodeproj \
             -scheme "StikDebug" \
             -configuration Debug \
-            -archivePath build/Wayfarer.xcarchive \
+            -archivePath build/iKiwi.xcarchive \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             ONLY_ACTIVE_ARCH=NO \
@@ -49,8 +49,8 @@ jobs:
       - name: Package IPA
         run: |
           mkdir -p Payload
-          cp -R build/Wayfarer.xcarchive/Products/Applications/*.app Payload/
-          zip -r Wayfarer.ipa Payload
+          cp -R build/iKiwi.xcarchive/Products/Applications/*.app Payload/
+          zip -r iKiwi.ipa Payload
 
       - name: Upload build log on failure
         if: failure()
@@ -65,4 +65,4 @@ jobs:
           tag_name: build-${{ github.run_number }}
           name: Build ${{ github.run_number }}
           prerelease: true
-          files: Wayfarer.ipa
+          files: iKiwi.ipa
