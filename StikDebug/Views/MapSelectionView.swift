@@ -1678,6 +1678,9 @@ struct LocationSimulationView: View {
         ) {
             endBackgroundTask()
             LocationSimulationSession.shared.stop()
+            withAnimation(.easeInOut(duration: 0.35)) {
+                position = .userLocation(fallback: .automatic)
+            }
         }
     }
 
@@ -2146,13 +2149,33 @@ extension LocationSimulationView {
                     LocationInfoCard(model: locationInfo)
                 }
                 Spacer(minLength: 0)
-                WayfarerCompassButton(heading: mapHeading) {
-                    resetMapNorth()
+                VStack(alignment: .trailing, spacing: 10) {
+                    WayfarerCompassButton(heading: mapHeading) {
+                        resetMapNorth()
+                    }
+                    if hasActiveSimulation {
+                        realLocationButton
+                    }
                 }
             }
             .padding(.horizontal, 12)
             .padding(.top, 8)
         }
+    }
+
+    /// Stops the simulation so the phone reports its real position again.
+    private var realLocationButton: some View {
+        Button(action: clear) {
+            Label("回到真實位置", systemImage: "location.fill")
+                .font(.footnote.weight(.semibold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(.regularMaterial, in: Capsule())
+                .overlay(Capsule().stroke(Color.secondary.opacity(0.25)))
+        }
+        .buttonStyle(.plain)
+        .disabled(!pairingExists || isBusy)
+        .accessibilityLabel("回到手機的真實位置，停止模擬")
     }
 
     private func resetMapNorth() {
