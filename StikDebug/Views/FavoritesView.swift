@@ -776,6 +776,12 @@ struct FavoritesSheet: View {
             }
 
             Button {
+                CoordinateClipboard.copy(CoordinateClipboard.text(for: favorite.coordinate))
+            } label: {
+                Label("複製座標", systemImage: "doc.on.doc")
+            }
+
+            Button {
                 renamingRouteID = nil
                 renamingCoordinateID = favorite.id
                 renameText = favorite.name
@@ -857,6 +863,15 @@ struct FavoritesSheet: View {
                             }
                         }
                         .contextMenu {
+                            Button {
+                                let points = route.stops.map {
+                                    CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
+                                }
+                                CoordinateClipboard.copy(CoordinateClipboard.text(for: points))
+                            } label: {
+                                Label("複製座標清單", systemImage: "doc.on.doc")
+                            }
+
                             Button {
                                 renamingCoordinateID = nil
                                 renamingRouteID = route.id

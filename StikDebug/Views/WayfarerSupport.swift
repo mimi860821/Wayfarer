@@ -79,6 +79,23 @@ enum RouteShape: String, CaseIterable, Identifiable {
     }
 }
 
+/// Copies coordinates as "lat,lng" (one per line for a list), the same format the
+/// search bar and the coordinate list accept when pasted back.
+enum CoordinateClipboard {
+    static func text(for coordinate: CLLocationCoordinate2D) -> String {
+        String(format: "%.6f,%.6f", coordinate.latitude, coordinate.longitude)
+    }
+
+    static func text(for coordinates: [CLLocationCoordinate2D]) -> String {
+        coordinates.map { text(for: $0) }.joined(separator: "\n")
+    }
+
+    static func copy(_ string: String) {
+        UIPasteboard.general.string = string
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+    }
+}
+
 enum WayfarerSpeed {
     static let maxKmh: Double = 3000
 

@@ -300,6 +300,20 @@ struct HistorySheet: View {
                 Label("刪除", systemImage: "trash")
             }
         }
+        .contextMenu {
+            Button {
+                if entry.isRoute, let route = entry.route {
+                    let points = route.stops.map {
+                        CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
+                    }
+                    CoordinateClipboard.copy(CoordinateClipboard.text(for: points))
+                } else {
+                    CoordinateClipboard.copy(CoordinateClipboard.text(for: entry.coordinate))
+                }
+            } label: {
+                Label(entry.isRoute ? "複製座標清單" : "複製座標", systemImage: "doc.on.doc")
+            }
+        }
     }
 
     private func saveToFavorites(_ entry: HistoryEntry) {

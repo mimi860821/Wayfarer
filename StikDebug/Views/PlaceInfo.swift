@@ -255,6 +255,7 @@ final class LocationInfoModel: ObservableObject {
 
 struct LocationInfoCard: View {
     @ObservedObject var model: LocationInfoModel
+    var onCopy: (() -> Void)? = nil
 
     private static func format(_ pattern: String, _ date: Date, _ zone: TimeZone) -> String {
         let formatter = DateFormatter()
@@ -268,9 +269,20 @@ struct LocationInfoCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(model.title.isEmpty ? "定位中…" : model.title)
-                .font(.footnote.weight(.semibold))
-                .lineLimit(2)
+            HStack(alignment: .top, spacing: 6) {
+                Text(model.title.isEmpty ? "定位中…" : model.title)
+                    .font(.footnote.weight(.semibold))
+                    .lineLimit(2)
+                if let onCopy {
+                    Spacer(minLength: 4)
+                    Button(action: onCopy) {
+                        Image(systemName: "doc.on.doc")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("複製目前位置的座標")
+                }
+            }
 
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 VStack(alignment: .leading, spacing: 1) {

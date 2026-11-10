@@ -824,6 +824,7 @@ struct LocationSimulationView: View {
     @State private var routeIsHop = false
     @State private var showHistory = false
     @State private var panelCollapsed = false
+    @State private var copyToastText: String?
     @State private var playbackBaseOffset = 0
     @State private var routeWaypointIndices: [Int] = []
     @State private var routeLogical = LogicalPlan.empty
@@ -1095,6 +1096,19 @@ struct LocationSimulationView: View {
         }
         .overlay(alignment: .top) {
             topOverlay
+        }
+        .overlay(alignment: .top) {
+            if let message = copyToastText {
+                Text(message)
+                    .font(.footnote.weight(.semibold))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.regularMaterial, in: Capsule())
+                    .overlay(Capsule().stroke(Color.secondary.opacity(0.25)))
+                    .padding(.top, 70)
+                    .transition(.opacity)
+                    .allowsHitTesting(false)
+            }
         }
         .safeAreaInset(edge: .top) {
             if !isDeviceConnected || showConnectedStatus {
@@ -1479,9 +1493,19 @@ struct LocationSimulationView: View {
     private var pinControls: some View {
         VStack(spacing: 10) {
             if let coord = coordinate {
-                Text(String(format: "%.6f, %.6f", coord.latitude, coord.longitude))
-                    .font(.footnote.monospaced())
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Text(String(format: "%.6f, %.6f", coord.latitude, coord.longitude))
+                        .font(.footnote.monospaced())
+                        .foregroundStyle(.secondary)
+                    Button {
+                        copyCoordinate(coord)
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .font(.footnote)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("複製座標")
+                }
             } else {
                 Text("點選地圖放置圖釘，或按「輸入座標」")
                     .font(.subheadline)
@@ -1551,15 +1575,26 @@ struct LocationSimulationView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Button {
-                routeFavoriteName = ""
-                showSaveRoute = true
-            } label: {
-                Label("收藏這條路線", systemImage: "star")
+            HStack(spacing: 10) {
+                Button {
+                    routeFavoriteName = ""
+                    showSaveRoute = true
+                } label: {
+                    Label("收藏這條路線", systemImage: "star")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(routePlan == nil || routeSourceStops.count < 2)
+
+                Button {
+                    copyRouteStops()
+                } label: {
+                    Label("複製座標", systemImage: "doc.on.doc")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(routeSourceStops.isEmpty)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .disabled(routePlan == nil || routeSourceStops.count < 2)
 
             if routeFromMultiStop && isRouteRunning {
                 pausedEditControls
@@ -2167,7 +2202,7 @@ extension LocationSimulationView {
         if searchText.isEmpty && searchCompleter.results.isEmpty {
             HStack(alignment: .top) {
                 if infoCoordinate != nil {
-                    LocationInfoCard(model: locationInfo)
+                    LocationInfoCard(model: locationInfo, onCopy: { copyCurrentPosition() })
                 }
                 Spacer(minLength: 0)
                 VStack(alignment: .trailing, spacing: 10) {
@@ -2197,6 +2232,31 @@ extension LocationSimulationView {
         .buttonStyle(.plain)
         .disabled(!pairingExists || isBusy)
         .accessibilityLabel("回到手機的真實位置，停止模擬")
+    }
+
+    private func showCopied(_ message: String) {
+        withAnimation { copyToastText = message }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+            if copyToastText == message {
+                withAnimation { copyToastText = nil }
+            }
+        }
+    }
+
+    private func copyCoordinate(_ target: CLLocationCoordinate2D) {
+        CoordinateClipboard.copy(CoordinateClipboard.text(for: target))
+        showCopied("已複製座標")
+    }
+
+    private func copyCurrentPosition() {
+        guard let target = infoCoordinate else { return }
+        copyCoordinate(target)
+    }
+
+    private func copyRouteStops() {
+        guard !routeSourceStops.isEmpty else { return }
+        CoordinateClipboard.copy(CoordinateClipboard.text(for: routeSourceStops))
+        showCopied("已複製 \(routeSourceStops.count) 個座標")
     }
 
     private func resetMapNorth() {
