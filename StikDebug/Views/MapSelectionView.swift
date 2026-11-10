@@ -1000,6 +1000,10 @@ struct LocationSimulationView: View {
                         Marker("圖釘", coordinate: coordinate)
                             .tint(.red)
                     }
+                    if multiStops.count >= 2 && !hasRouteContext {
+                        MapPolyline(coordinates: multiStops.map { $0.coordinate })
+                            .stroke(.orange.opacity(0.75), style: StrokeStyle(lineWidth: 3, dash: [6, 6]))
+                    }
                     if multiStops.count <= 100 {
                         ForEach(Array(multiStops.enumerated()), id: \.element.id) { index, stop in
                             Marker("\(index + 1)", coordinate: stop.coordinate)
@@ -1585,7 +1589,7 @@ struct LocationSimulationView: View {
                     .buttonStyle(.bordered)
                     .disabled(isReplanning)
                 } else {
-                    Button("重設", action: resetRouteSelection)
+                    Button("重設", action: resetKeepingStops)
                         .buttonStyle(.bordered)
                         .disabled(isBusy)
                 }
@@ -1725,6 +1729,23 @@ struct LocationSimulationView: View {
         }
         multiStops = []
         self.coordinate = coordinate
+    }
+
+    /// Reset for a multi-stop route: clear the built route and playback, but keep the
+    /// stops so the route is still there to edit or build again. Other routes are
+    /// cleared completely, as before.
+    private func resetKeepingStops() {
+        guard routeFromMultiStop, routeSourceStops.count >= 2 else {
+            resetRouteSelection()
+            return
+        }
+        let stops = routeSourceStops
+        resetRouteSelection()
+        multiStops = stops.map { RouteStop(coordinate: $0) }
+        panelTab = .multi
+        if let outline = makeRoutePolyline(for: stops) {
+            position = .rect(outline.boundingMapRect)
+        }
     }
 
     private func resetRouteSelection() {
