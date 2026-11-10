@@ -55,6 +55,7 @@ struct MainTabView: View {
     @State private var detachedFeature: AppFeature?
     @State private var didSetInitialHome = false
     @State private var pendingLocationAction: ExternalLocationAction?
+    @ObservedObject private var sharedStore = SharedListStore.shared
 
     var body: some View {
         ZStack {
@@ -80,6 +81,28 @@ struct MainTabView: View {
             }
             .onOpenURL { url in
                 handleURL(url)
+            }
+            .alert(
+                "加入共享清單？",
+                isPresented: Binding(
+                    get: { sharedStore.pendingJoinCode != nil },
+                    set: { isPresented in
+                        if !isPresented {
+                            sharedStore.pendingJoinCode = nil
+                        }
+                    }
+                ),
+                presenting: sharedStore.pendingJoinCode
+            ) { code in
+                Button("加入") {
+                    sharedStore.joinRoom(from: code)
+                    sharedStore.pendingJoinCode = nil
+                }
+                Button("取消", role: .cancel) {
+                    sharedStore.pendingJoinCode = nil
+                }
+            } message: { code in
+                Text("朋友邀請你加入共享座標清單（房間 \(code.prefix(6))…）。加入後，到地圖左上角的共享清單圖示就能看到內容。")
             }
             .confirmationDialog(
                 pendingLocationAction?.title ?? "External Location Request",
@@ -141,6 +164,12 @@ struct MainTabView: View {
             }
         case "clear-location", "stop-location":
             pendingLocationAction = .clear
+        case "join":
+            let value = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "room" })?.value
+            if let value, let code = SharedListStore.extractRoomCode(from: value) {
+                sharedStore.pendingJoinCode = code
+            }
         default:
             break
         }

@@ -823,6 +823,7 @@ struct LocationSimulationView: View {
     @AppStorage("wayfarer.dwellSeconds") private var dwellSeconds: Double = 3
     @State private var routeIsHop = false
     @State private var showHistory = false
+    @State private var showSharedList = false
     @State private var panelCollapsed = false
     @State private var copyToastText: String?
     @State private var playbackBaseOffset = 0
@@ -1143,6 +1144,13 @@ struct LocationSimulationView: View {
                 .accessibilityLabel("歷史記錄")
 
                 Button {
+                    showSharedList = true
+                } label: {
+                    Image(systemName: "person.2.fill")
+                }
+                .accessibilityLabel("共享清單")
+
+                Button {
                     showCoordinateImporter = true
                 } label: {
                     Image(systemName: "square.and.arrow.down")
@@ -1193,6 +1201,20 @@ struct LocationSimulationView: View {
                 },
                 onPickRoute: { route in
                     applyRouteFavorite(route)
+                }
+            )
+        }
+        .sheet(isPresented: $showSharedList) {
+            SharedListSheet(
+                currentPin: coordinate,
+                onPick: { item in
+                    panelTab = .teleport
+                    applySelection(item.coordinate)
+                },
+                onTeleport: { item in
+                    panelTab = .teleport
+                    applySelection(item.coordinate)
+                    DispatchQueue.main.async { simulate() }
                 }
             )
         }
