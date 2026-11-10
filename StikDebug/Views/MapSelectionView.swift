@@ -1149,14 +1149,6 @@ struct LocationSimulationView: View {
                     Image(systemName: "person.2.fill")
                 }
                 .accessibilityLabel("共享清單")
-
-                Button {
-                    showCoordinateImporter = true
-                } label: {
-                    Image(systemName: "square.and.arrow.down")
-                }
-                .disabled(isBusy || isRouteRunning || isImportingCoordinates)
-                .accessibilityLabel("匯入座標檔")
             }
             ToolbarItem(placement: .topBarTrailing) {
                 TextField("搜尋地點…", text: $searchText)
