@@ -407,6 +407,18 @@ final class SharedListStore: ObservableObject {
 
 // MARK: - Views
 
+/// The standard iOS share sheet. (SwiftUI's ShareLink does not open reliably from
+/// inside a menu in a sheet.)
+private struct ActivityView: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
 private struct SharedEditorTarget: Identifiable {
     let id = UUID()
     var item: SharedItem?
@@ -426,6 +438,7 @@ struct SharedListSheet: View {
     @State private var infoMessage: String?
     @State private var showLeaveConfirm = false
     @State private var isTesting = false
+    @State private var showShareSheet = false
 
     private var groups: [(title: String, items: [SharedItem])] {
         let grouped = Dictionary(grouping: store.visibleItems) {
@@ -467,15 +480,25 @@ struct SharedListSheet: View {
                         }
                         .accessibilityLabel("新增座標")
 
+                        Button {
+                            showShareSheet = true
+                        } label: {
+                            Image(systemName: "person.badge.plus")
+                        }
+                        .accessibilityLabel("邀請朋友")
+
                         Menu {
-                            ShareLink(item: store.inviteText) {
-                                Label("邀請朋友", systemImage: "square.and.arrow.up")
+                            Button {
+                                UIPasteboard.general.string = store.inviteText
+                                infoMessage = "已複製邀請文字，可以直接貼到 LINE 或訊息。"
+                            } label: {
+                                Label("複製邀請文字", systemImage: "doc.on.doc")
                             }
                             Button {
                                 UIPasteboard.general.string = store.room
                                 infoMessage = "已複製房間碼。"
                             } label: {
-                                Label("複製房間碼", systemImage: "doc.on.doc")
+                                Label("複製房間碼", systemImage: "key")
                             }
                             Button {
                                 Task { await store.sync(full: true) }
@@ -505,6 +528,10 @@ struct SharedListSheet: View {
                     if Task.isCancelled { break }
                     await store.sync()
                 }
+            }
+            .sheet(isPresented: $showShareSheet) {
+                ActivityView(items: [store.inviteText])
+                    .presentationDetents([.medium, .large])
             }
             .sheet(item: $editorTarget) { target in
                 SharedItemEditor(
