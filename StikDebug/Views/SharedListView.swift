@@ -766,7 +766,7 @@ struct SharedListSheet: View {
     }
 }
 
-private struct SharedItemEditor: View {
+struct SharedItemEditor: View {
     @Environment(\.dismiss) private var dismiss
 
     let item: SharedItem?
@@ -854,5 +854,41 @@ private struct SharedItemEditor: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+}
+
+/// "Save to the shared list" for the pin on the map, without opening the list.
+struct SharedSaveSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var store = SharedListStore.shared
+
+    let coordinate: CLLocationCoordinate2D
+
+    var body: some View {
+        if store.room == nil {
+            NavigationStack {
+                ContentUnavailableView(
+                    "還沒有共享房間",
+                    systemImage: "person.2.slash",
+                    description: Text("請先到左上角的「共享清單」建立或加入房間，之後就能直接從這裡收藏。")
+                )
+                .navigationTitle("收藏到共享")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("關閉") { dismiss() }
+                    }
+                }
+            }
+            .presentationDetents([.medium])
+        } else {
+            SharedItemEditor(
+                item: nil,
+                defaultCoordinate: coordinate,
+                categories: store.categories
+            ) { name, point, category, note in
+                store.addItem(name: name, coordinate: point, category: category, note: note)
+            }
+        }
     }
 }

@@ -853,6 +853,7 @@ struct LocationSimulationView: View {
     @State private var bookmarks: [LocationBookmark] = []
     @State private var showBookmarks = false
     @State private var showSaveBookmark = false
+    @State private var showSaveShared = false
     @State private var newBookmarkName = ""
 
     private var pairingFilePath: String {
@@ -1076,8 +1077,6 @@ struct LocationSimulationView: View {
                             switch panelTab {
                             case .teleport:
                                 pinControls
-                            case .navigate:
-                                navigateControls
                             case .multi:
                                 multiStopControls
                             }
@@ -1171,6 +1170,11 @@ struct LocationSimulationView: View {
         .sheet(isPresented: $showSaveBookmark) {
             if let pinCoordinate = coordinate {
                 SaveCoordinateSheet(coordinate: pinCoordinate)
+            }
+        }
+        .sheet(isPresented: $showSaveShared) {
+            if let pinCoordinate = coordinate {
+                SharedSaveSheet(coordinate: pinCoordinate)
             }
         }
         .alert("收藏路線", isPresented: $showSaveRoute) {
@@ -1539,9 +1543,10 @@ struct LocationSimulationView: View {
                 Button {
                     showCoordinateInput = true
                 } label: {
-                    Label("輸入座標", systemImage: "keyboard")
+                    Image(systemName: "keyboard")
                 }
                 .buttonStyle(.bordered)
+                .accessibilityLabel("輸入座標")
 
                 Button {
                     showSaveBookmark = true
@@ -1551,6 +1556,17 @@ struct LocationSimulationView: View {
                 .buttonStyle(.bordered)
                 .tint(.blue)
                 .disabled(coordinate == nil || isRouteRunning)
+                .accessibilityLabel("收藏座標")
+
+                Button {
+                    showSaveShared = true
+                } label: {
+                    Image(systemName: "person.2.fill")
+                }
+                .buttonStyle(.bordered)
+                .tint(.green)
+                .disabled(coordinate == nil || isRouteRunning)
+                .accessibilityLabel("收藏到共享清單")
             }
         }
     }
@@ -2078,51 +2094,6 @@ extension LocationSimulationView {
 
     private var isMultiStopMode: Bool {
         panelTab == .multi && !hasRouteContext
-    }
-
-    private var navigateHint: String {
-        if simulationSession.coordinate == nil {
-            return "尚未設定目前位置。請先到「瞬移」設定起點，或按「設定起點與終點」。"
-        }
-        if coordinate == nil {
-            return "在地圖上點選目的地，再按「從目前位置前往」。"
-        }
-        return "已選好目的地，按「從目前位置前往」規劃路線。"
-    }
-
-    private var navigateControls: some View {
-        VStack(spacing: 10) {
-            Text(navigateHint)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-
-            TravelModeSpeedBar(
-                modeRaw: $travelModeRaw,
-                speedKmh: $speedKmh,
-                updateInterval: $updateInterval,
-                modeLocked: false
-            )
-
-            HStack(spacing: 10) {
-                Button {
-                    showRouteSearch = true
-                } label: {
-                    Label("設定起點與終點", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
-                }
-                .buttonStyle(.bordered)
-                .disabled(isBusy)
-
-                Button("從目前位置前往") {
-                    navigateToPin()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(
-                    !pairingExists || isBusy || isLoadingRoute ||
-                    coordinate == nil || simulationSession.coordinate == nil
-                )
-            }
-        }
     }
 
     private var pathShape: RouteShape {
@@ -2816,16 +2787,14 @@ extension LocationSimulationView {
     }
 
     /// A place picked from the search results, or a coordinate typed in the search bar.
-    /// On the Teleport tab it teleports there at once; on the other tabs it is still
-    /// used as the destination (Navigate) or added as a stop (Multi-stop).
+    /// On the Teleport tab it teleports there at once; on the Multi-stop tab it is
+    /// added as a stop.
     private func useSearchedPlace(_ target: CLLocationCoordinate2D) {
         dismissKeyboard()
         switch panelTab {
         case .teleport:
             applySelection(target)
             DispatchQueue.main.async { simulate() }
-        case .navigate:
-            applySelection(target)
         case .multi:
             addStop(target)
             position = .region(
@@ -2846,15 +2815,6 @@ extension LocationSimulationView {
             return
         }
         multiStops.append(RouteStop(coordinate: stopCoordinate))
-    }
-
-    private func navigateToPin() {
-        guard let destination = coordinate,
-              let start = simulationSession.coordinate else { return }
-        routeStartSelection = RouteSearchSelection(title: "目前位置", coordinate: start)
-        routeEndSelection = RouteSearchSelection(title: "目的地", coordinate: destination)
-        coordinate = nil
-        refreshRoute()
     }
 
     private func buildMultiStopRoute() {

@@ -48,7 +48,6 @@ enum TravelMode: String, CaseIterable, Identifiable {
 
 enum WayfarerTab: String, CaseIterable, Identifiable {
     case teleport
-    case navigate
     case multi
 
     var id: String { rawValue }
@@ -56,7 +55,6 @@ enum WayfarerTab: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .teleport: return "瞬移"
-        case .navigate: return "導航"
         case .multi: return "多點路徑"
         }
     }
