@@ -775,7 +775,8 @@ struct LocationSimulationView: View {
     }
     @ObservedObject private var simulationSession = LocationSimulationSession.shared
     @State private var coordinate: CLLocationCoordinate2D?
-    @State private var position: MapCameraPosition = .userLocation(fallback: .automatic)
+    @State private var position: MapPosition = .user
+    @AppStorage("wayfarer.mapSource") private var mapSourceRaw = MapSource.appleStandard.rawValue
 
     @State private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
     @State private var routeLoadTask: Task<Void, Never>?
@@ -833,7 +834,7 @@ struct LocationSimulationView: View {
     @State private var routeCycleDirty = false
     @State private var isReplanning = false
     @State private var hopRemaining: Double = 0
-    @State private var mapCamera: MapCamera?
+    @State private var mapCamera: WayfarerCamera?
     @State private var mapHeading: Double = 0
     @StateObject private var locationInfo = LocationInfoModel()
     @State private var repeatPlayback = false
@@ -980,55 +981,24 @@ struct LocationSimulationView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            MapReader { proxy in
-                Map(position: $position) {
-                    if hasRouteContext {
-                        if let routePolyline {
-                            MapPolyline(routePolyline)
-                                .stroke(.blue.opacity(0.8), lineWidth: 5)
-                        }
-                        if let routeStartCoordinate, multiStops.isEmpty {
-                            Marker("起點", coordinate: routeStartCoordinate)
-                                .tint(.green)
-                        }
-                        if let routeEndCoordinate, multiStops.isEmpty {
-                            Marker("終點", coordinate: routeEndCoordinate)
-                                .tint(.red)
-                        }
-                        if let displayedRouteCoordinate {
-                            Marker("目前位置", coordinate: displayedRouteCoordinate)
-                                .tint(.blue)
-                        }
-                    } else if let coordinate {
-                        Marker("圖釘", coordinate: coordinate)
-                            .tint(.red)
+            WayfarerMapView(
+                source: mapSource,
+                position: position,
+                routeLine: hasRouteContext ? routePolyline : nil,
+                stopLine: (multiStops.count >= 2 && !hasRouteContext) ? multiStops.map { $0.coordinate } : [],
+                markers: mapMarkers,
+                onTap: { tapped in
+                    if isMultiStopMode {
+                        addStop(tapped)
+                    } else {
+                        applySelection(tapped)
                     }
-                    if multiStops.count >= 2 && !hasRouteContext {
-                        MapPolyline(coordinates: multiStops.map { $0.coordinate })
-                            .stroke(.orange.opacity(0.75), style: StrokeStyle(lineWidth: 3, dash: [6, 6]))
-                    }
-                    if multiStops.count <= 100 {
-                        ForEach(Array(multiStops.enumerated()), id: \.element.id) { index, stop in
-                            Marker("\(index + 1)", coordinate: stop.coordinate)
-                                .tint(.orange)
-                        }
-                    }
+                },
+                onCameraChange: { camera in
+                    mapHeading = camera.heading
+                    mapCamera = camera
                 }
-                .mapStyle(.standard(elevation: .realistic))
-                .onTapGesture { point in
-                    if let loc = proxy.convert(point, from: .local) {
-                        if isMultiStopMode {
-                            addStop(loc)
-                        } else {
-                            applySelection(loc)
-                        }
-                    }
-                }
-                .onMapCameraChange(frequency: .continuous) { context in
-                    mapHeading = context.camera.heading
-                    mapCamera = context.camera
-                }
-            }
+            )
                 .ignoresSafeArea()
                 .onChange(of: coordinate.map(CoordinateSnapshot.init)) { _, new in
                     if let new {
@@ -1042,6 +1012,21 @@ struct LocationSimulationView: View {
                 }
 
                 Spacer()
+
+                if let attribution = mapSource.attribution {
+                    HStack {
+                        Text(attribution)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(.regularMaterial, in: Capsule())
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
+                    .allowsHitTesting(false)
+                }
 
                 VStack(spacing: 12) {
                     if isRouteRunning && panelCollapsed {
@@ -1742,7 +1727,7 @@ struct LocationSimulationView: View {
             endBackgroundTask()
             LocationSimulationSession.shared.stop()
             withAnimation(.easeInOut(duration: 0.35)) {
-                position = .userLocation(fallback: .automatic)
+                position = .user
             }
         }
     }
@@ -2188,6 +2173,7 @@ extension LocationSimulationView {
                     WayfarerCompassButton(heading: mapHeading) {
                         resetMapNorth()
                     }
+                    mapSourceMenu
                     if hasActiveSimulation {
                         realLocationButton
                     }
@@ -2196,6 +2182,23 @@ extension LocationSimulationView {
             .padding(.horizontal, 12)
             .padding(.top, 8)
         }
+    }
+
+    private var mapSourceMenu: some View {
+        Menu {
+            Picker("圖資", selection: $mapSourceRaw) {
+                ForEach(MapSource.allCases) { source in
+                    Text(source.title).tag(source.rawValue)
+                }
+            }
+        } label: {
+            Image(systemName: "map")
+                .font(.system(size: 18, weight: .semibold))
+                .frame(width: 44, height: 44)
+                .background(.regularMaterial, in: Circle())
+                .overlay(Circle().stroke(Color.secondary.opacity(0.25)))
+        }
+        .accessibilityLabel("切換圖資")
     }
 
     /// Stops the simulation so the phone reports its real position again.
@@ -2238,11 +2241,38 @@ extension LocationSimulationView {
         showCopied("已複製 \(routeSourceStops.count) 個座標")
     }
 
+    private var mapSource: MapSource {
+        MapSource(rawValue: mapSourceRaw) ?? .appleStandard
+    }
+
+    private var mapMarkers: [WayfarerMapMarker] {
+        var result: [WayfarerMapMarker] = []
+        if hasRouteContext {
+            if let routeStartCoordinate, multiStops.isEmpty {
+                result.append(WayfarerMapMarker(id: "start", coordinate: routeStartCoordinate, label: "起點", kind: .start))
+            }
+            if let routeEndCoordinate, multiStops.isEmpty {
+                result.append(WayfarerMapMarker(id: "end", coordinate: routeEndCoordinate, label: "終點", kind: .end))
+            }
+            if let displayedRouteCoordinate {
+                result.append(WayfarerMapMarker(id: "current", coordinate: displayedRouteCoordinate, label: "目前位置", kind: .current))
+            }
+        } else if let coordinate {
+            result.append(WayfarerMapMarker(id: "pin", coordinate: coordinate, label: "圖釘", kind: .pin))
+        }
+        if multiStops.count <= 100 {
+            for (index, stop) in multiStops.enumerated() {
+                result.append(WayfarerMapMarker(id: "stop-\(stop.id.uuidString)", coordinate: stop.coordinate, label: "\(index + 1)", kind: .stop))
+            }
+        }
+        return result
+    }
+
     /// Moves the map to `target` and keeps the zoom, rotation and tilt it has now.
     private func centerMap(on target: CLLocationCoordinate2D) {
         if let camera = mapCamera {
             position = .camera(
-                MapCamera(
+                WayfarerCamera(
                     centerCoordinate: target,
                     distance: camera.distance,
                     heading: camera.heading,
@@ -2264,7 +2294,7 @@ extension LocationSimulationView {
         guard let camera = mapCamera else { return }
         withAnimation(.easeInOut(duration: 0.35)) {
             position = .camera(
-                MapCamera(
+                WayfarerCamera(
                     centerCoordinate: camera.centerCoordinate,
                     distance: camera.distance,
                     heading: 0,
