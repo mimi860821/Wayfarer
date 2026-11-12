@@ -1032,13 +1032,7 @@ struct LocationSimulationView: View {
                 .ignoresSafeArea()
                 .onChange(of: coordinate.map(CoordinateSnapshot.init)) { _, new in
                     if let new {
-                        position = .region(
-                            MKCoordinateRegion(
-                                center: new.coordinate,
-                                latitudinalMeters: 1000,
-                                longitudinalMeters: 1000
-                            )
-                        )
+                        centerMap(on: new.coordinate)
                     }
                 }
 
@@ -2244,6 +2238,28 @@ extension LocationSimulationView {
         showCopied("已複製 \(routeSourceStops.count) 個座標")
     }
 
+    /// Moves the map to `target` and keeps the zoom, rotation and tilt it has now.
+    private func centerMap(on target: CLLocationCoordinate2D) {
+        if let camera = mapCamera {
+            position = .camera(
+                MapCamera(
+                    centerCoordinate: target,
+                    distance: camera.distance,
+                    heading: camera.heading,
+                    pitch: camera.pitch
+                )
+            )
+        } else {
+            position = .region(
+                MKCoordinateRegion(
+                    center: target,
+                    latitudinalMeters: 1000,
+                    longitudinalMeters: 1000
+                )
+            )
+        }
+    }
+
     private func resetMapNorth() {
         guard let camera = mapCamera else { return }
         withAnimation(.easeInOut(duration: 0.35)) {
@@ -2797,13 +2813,7 @@ extension LocationSimulationView {
             DispatchQueue.main.async { simulate() }
         case .multi:
             addStop(target)
-            position = .region(
-                MKCoordinateRegion(
-                    center: target,
-                    latitudinalMeters: 1000,
-                    longitudinalMeters: 1000
-                )
-            )
+            centerMap(on: target)
         }
     }
 
