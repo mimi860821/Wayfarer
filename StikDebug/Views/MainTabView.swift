@@ -56,6 +56,7 @@ struct MainTabView: View {
     @State private var didSetInitialHome = false
     @State private var pendingLocationAction: ExternalLocationAction?
     @ObservedObject private var sharedStore = SharedListStore.shared
+    @ObservedObject private var updater = UpdateChecker.shared
 
     var body: some View {
         ZStack {
@@ -81,6 +82,35 @@ struct MainTabView: View {
             }
             .onOpenURL { url in
                 handleURL(url)
+            }
+            .task {
+                updater.checkAtLaunch()
+            }
+            .alert(
+                "有新版本",
+                isPresented: Binding(
+                    get: { updater.available != nil },
+                    set: { isPresented in
+                        if !isPresented {
+                            updater.available = nil
+                        }
+                    }
+                ),
+                presenting: updater.available
+            ) { info in
+                Button("更新") {
+                    updater.install(info)
+                    updater.available = nil
+                }
+                Button("稍後", role: .cancel) {
+                    updater.available = nil
+                }
+                Button("略過這個版本") {
+                    updater.skip(info)
+                    updater.available = nil
+                }
+            } message: { info in
+                Text("iKiwi 第 \(info.build) 版已經推出（目前是第 \(updater.currentBuild) 版）。按「更新」會交給 SideStore 下載並安裝，資料會保留。")
             }
             .alert(
                 "加入共享清單？",

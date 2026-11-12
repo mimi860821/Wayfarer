@@ -43,6 +43,8 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             SWIFT_OPTIMIZATION_LEVEL="-Onone" \
             IPHONEOS_DEPLOYMENT_TARGET=17.4 \
+            MARKETING_VERSION=0.1.${{ github.run_number }} \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             2>&1 | tee build.log | tail -n 200
           test ${PIPESTATUS[0]} -eq 0
 
@@ -51,6 +53,56 @@ jobs:
           mkdir -p Payload
           cp -R build/iKiwi.xcarchive/Products/Applications/*.app Payload/
           zip -r iKiwi.ipa Payload
+
+      - name: Generate SideStore source
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          python3 - <<'EOF'
+          import json, os, datetime
+          run = os.environ["RUN_NUMBER"]
+          repo = "mimi860821/iKiwi"
+          size = os.path.getsize("iKiwi.ipa")
+          version = "0.1." + run
+          date = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+          url = "https://github.com/%s/releases/download/build-%s/iKiwi.ipa" % (repo, run)
+          description = "iKiwi 第 %s 版" % run
+          app = {
+              "name": "iKiwi",
+              "bundleIdentifier": "com.mimi860821.wayfarer",
+              "developerName": "mimi860821",
+              "subtitle": "定位模擬",
+              "localizedDescription": "在 iPhone 上模擬 GPS 位置：瞬移、多點路徑、共享座標清單。",
+              "iconURL": "https://raw.githubusercontent.com/%s/main/StikDebug/Assets.xcassets/AppIcon.appiconset/icon-1024.png" % repo,
+              "tintColor": "34A853",
+              "screenshotURLs": [],
+              "version": version,
+              "versionDate": date,
+              "versionDescription": description,
+              "downloadURL": url,
+              "size": size,
+              "versions": [{
+                  "version": version,
+                  "buildVersion": run,
+                  "date": date,
+                  "localizedDescription": description,
+                  "downloadURL": url,
+                  "size": size,
+                  "minOSVersion": "17.4"
+              }],
+              "appPermissions": {"entitlements": [], "privacy": {}}
+          }
+          source = {
+              "name": "iKiwi",
+              "identifier": "com.mimi860821.ikiwi.source",
+              "sourceURL": "https://github.com/%s/releases/latest/download/source.json" % repo,
+              "apps": [app],
+              "news": []
+          }
+          with open("source.json", "w", encoding="utf-8") as f:
+              json.dump(source, f, ensure_ascii=False, indent=2)
+          EOF
+          cat source.json
 
       - name: Upload build log on failure
         if: failure()
@@ -64,5 +116,8 @@ jobs:
         with:
           tag_name: build-${{ github.run_number }}
           name: Build ${{ github.run_number }}
-          prerelease: true
-          files: iKiwi.ipa
+          prerelease: false
+          make_latest: "true"
+          files: |
+            iKiwi.ipa
+            source.json

@@ -40,6 +40,8 @@ struct SettingsView: View {
     @State private var ddiDownloadProgress: Double = 0.0
     @State private var ddiStatusMessage: String = ""
     @State private var ddiResultMessage: (text: String, isError: Bool)?
+    @ObservedObject private var updater = UpdateChecker.shared
+    @State private var updateMessage: String?
 
     private var appVersion: String {
         let marketingVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
@@ -195,6 +197,38 @@ struct SettingsView: View {
                     } else if let result = ddiResultMessage {
                         Text(result.text).font(.caption).foregroundStyle(result.isError ? .red : .green)
                     }
+                }
+
+                Section {
+                    LabeledContent("目前版本", value: "第 \(updater.currentBuild) 版")
+                    Button {
+                        Task {
+                            switch await updater.check(manual: true) {
+                            case .available:
+                                updateMessage = nil
+                            case .upToDate:
+                                updateMessage = "已經是最新版本。"
+                            case .failed(let text):
+                                updateMessage = text
+                            }
+                        }
+                    } label: {
+                        Label(updater.isChecking ? "檢查中…" : "檢查更新", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .disabled(updater.isChecking)
+                    if let updateMessage {
+                        Text(updateMessage).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Button {
+                        UIPasteboard.general.string = UpdateChecker.sourceURL
+                        updateMessage = "已複製 SideStore 來源網址，到 SideStore 的「Sources」貼上即可。"
+                    } label: {
+                        Label("複製 SideStore 來源網址", systemImage: "doc.on.doc")
+                    }
+                } header: {
+                    Text("更新")
+                } footer: {
+                    Text("把來源加進 SideStore 後，新版本會直接出現在 SideStore 的更新清單。")
                 }
 
                 Section("Help") {
