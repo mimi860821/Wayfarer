@@ -839,6 +839,10 @@ struct LocationSimulationView: View {
     @StateObject private var locationInfo = LocationInfoModel()
     @State private var repeatPlayback = false
     @State private var isPlaybackPaused = false
+    /// Time spent actually playing (pauses excluded): what was banked before the
+    /// current stretch, and when the current stretch began (nil while paused).
+    @State private var playbackElapsedBase: TimeInterval = 0
+    @State private var playbackRunningSince: Date?
     @State private var playbackCursor = 1
     @State private var playbackGeneration = 0
 
@@ -1280,6 +1284,19 @@ struct LocationSimulationView: View {
         .onChange(of: isRouteRunning) { _, running in
             if !running {
                 panelCollapsed = false
+                playbackElapsedBase = 0
+                playbackRunningSince = nil
+            }
+        }
+        .onChange(of: isPlaybackPaused) { _, paused in
+            guard isRouteRunning else { return }
+            if paused {
+                if let since = playbackRunningSince {
+                    playbackElapsedBase += Date().timeIntervalSince(since)
+                }
+                playbackRunningSince = nil
+            } else if playbackRunningSince == nil {
+                playbackRunningSince = Date()
             }
         }
         .onChange(of: pathShapeRaw) { _, _ in
@@ -1555,6 +1572,12 @@ struct LocationSimulationView: View {
             Text(routeStatusText)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+
+            if isRouteRunning, let progress = routeProgressText {
+                routeProgressLine(progress)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
 
             if isLoadingRoute || isPrefetchingRouteSpeeds {
                 ProgressView()
@@ -1906,6 +1929,8 @@ struct LocationSimulationView: View {
 
     private func startRoutePlayback(routeID: UUID) {
         isPlaybackPaused = false
+        playbackElapsedBase = 0
+        playbackRunningSince = Date()
         playbackCursor = 1
         playbackGeneration += 1
         routePlaybackTask = Task {
@@ -2419,6 +2444,15 @@ extension LocationSimulationView {
         return "已到 \(min(passedWaypointCount(), total))／\(total) 站"
     }
 
+    /// "已到 2／5 站 · 已進行 12:34"
+    private func routeProgressLine(_ progress: String) -> some View {
+        HStack(spacing: 4) {
+            Text(progress)
+            Text("·")
+            PlaybackElapsedText(base: playbackElapsedBase, since: playbackRunningSince)
+        }
+    }
+
     private var collapsedBar: some View {
         HStack(spacing: 10) {
             Button {
@@ -2436,7 +2470,7 @@ extension LocationSimulationView {
                     .font(.footnote)
                     .lineLimit(1)
                 if let progress = routeProgressText {
-                    Text(progress)
+                    routeProgressLine(progress)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -3519,6 +3553,37 @@ struct BookmarksView: View {
                     EditButton()
                 }
             }
+        }
+    }
+}
+
+
+/// Playing time of a route, e.g. "已進行 12:34" (or "1:02:03" past an hour).
+/// Ticks once a second while playing and stands still while paused.
+private struct PlaybackElapsedText: View {
+    let base: TimeInterval
+    let since: Date?
+
+    private static func format(_ seconds: TimeInterval) -> String {
+        let total = max(Int(seconds), 0)
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let secs = total % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, secs)
+        }
+        return String(format: "%02d:%02d", minutes, secs)
+    }
+
+    var body: some View {
+        if let since {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text("已進行 \(Self.format(base + context.date.timeIntervalSince(since)))")
+                    .monospacedDigit()
+            }
+        } else {
+            Text("已進行 \(Self.format(base))")
+                .monospacedDigit()
         }
     }
 }

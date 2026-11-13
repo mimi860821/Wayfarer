@@ -97,10 +97,10 @@ final class BackgroundAudioManager {
         player.scheduleBuffer(buffer, at: nil, options: .loops)
     }
 
-    // Runs every 2 seconds to reclaim the session if continuous game audio
+    // Runs every 10 seconds to reclaim the session if continuous game audio
     // holds it and the interruption-ended notification never fires.
     private func startHealthCheck() {
-        let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 10, repeats: true) { [weak self] _ in
             self?.recoverIfNeeded()
         }
         RunLoop.main.add(timer, forMode: .common)

@@ -24,7 +24,9 @@ enum AppBootstrapper {
             "enableAdvancedOptions": enableAdvancedOptions,
             UserDefaults.Keys.txmOverride: false,
             UserDefaults.Keys.confirmExternalJITRequests: true,
-            "keepAliveAudio": true,
+            // Background location alone keeps the app alive and runs cooler than also
+            // playing silent audio, so audio is off unless the user turns it on.
+            "keepAliveAudio": false,
             "keepAliveLocation": true
         ])
     }

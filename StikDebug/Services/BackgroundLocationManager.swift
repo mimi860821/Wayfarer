@@ -65,7 +65,10 @@ final class BackgroundLocationManager: NSObject, CLLocationManagerDelegate {
         case .authorizedAlways:
             locationManager.startUpdatingLocation()
         case .authorizedWhenInUse:
+            // Background updates also work with "While Using"; ask for "Always" too
+            // (iOS shows that prompt at most once) but do not wait for it.
             locationManager.requestAlwaysAuthorization()
+            locationManager.startUpdatingLocation()
         case .notDetermined:
             locationManager.requestAlwaysAuthorization()
         case .denied, .restricted:

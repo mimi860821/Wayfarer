@@ -17,7 +17,7 @@ struct SettingsView: View {
     @StateObject private var onDevicePairing = OnDevicePairingService.shared
     @AppStorage(UserDefaults.Keys.txmOverride) private var overrideTXMDetection = false
     @AppStorage(UserDefaults.Keys.confirmExternalJITRequests) private var confirmExternalJITRequests = true
-    @AppStorage("keepAliveAudio") private var keepAliveAudio = true
+    @AppStorage("keepAliveAudio") private var keepAliveAudio = false
     @AppStorage("keepAliveLocation") private var keepAliveLocation = true
     @AppStorage(UserDefaults.Keys.targetDeviceIP) private var targetDeviceIP = DeviceConnectionContext.defaultTargetIPAddress
     @AppStorage("TunnelRemotePairingPort") private var remotePairingPortOverride = ""
@@ -108,8 +108,8 @@ struct SettingsView: View {
                 Section {
                     Toggle(isOn: $keepAliveAudio) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Silent Audio")
-                            Text("Plays inaudible audio so iOS keeps the app running.")
+                            Text("靜音音訊")
+                            Text("播放聽不到的音訊，讓 iOS 保持 app 運作。比較耗電、容易發熱，預設關閉；只有鎖屏後位置會停止時才開。")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
@@ -119,8 +119,8 @@ struct SettingsView: View {
 
                     Toggle(isOn: $keepAliveLocation) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Background Location")
-                            Text("Uses low-accuracy location to stay alive when an activity needs it.")
+                            Text("背景定位")
+                            Text("用低精度定位讓 iOS 在背景保持 app 運作，預設開啟，比靜音音訊省電。")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
@@ -129,7 +129,7 @@ struct SettingsView: View {
                     }
 
                 } header: {
-                    Text("Background Keep-Alive")
+                    Text("背景保持運作")
                 }
 
                 Section("Behavior") {
